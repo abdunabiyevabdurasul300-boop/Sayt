@@ -50,7 +50,13 @@ PORT = int(os.getenv("PORT", "10000"))
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+app = Flask(__name__)
+app.secret_key = SECRET_KEY
 
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = False
+app.config["PERMANENT_SESSION_LIFETIME"] = 60 * 60 * 24 * 30
 # Login/sessionni saqlash uchun
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
