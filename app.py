@@ -1,20 +1,14 @@
 import os
 import sqlite3
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
 
 import requests
 from flask import (
-    Flask,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    session,
-    flash,
-    jsonify
+    Flask, render_template, request, redirect,
+    url_for, session, flash, jsonify
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -29,35 +23,25 @@ DB_PATH = os.path.join(BASE_DIR, "shop.db")
 FAZER_BASE = "https://api.fzr.cards/api/v2"
 AKTIV_BASE = "https://ws2524.wineclo.com/AktivSimBot/api/v2/"
 
-FAZER_API_KEY = os.getenv("FAZER_API_KEY", "fc_e2a3d96eda3c7f0bd6b4a139").strip()
-AKTIV_API_KEY = os.getenv("AKTIVSIM_API_KEY", "YTvijKX0w1FHVGTv19i54ahe").strip()
+FAZER_API_KEY = os.getenv("FAZER_API_KEY", "").strip()
+AKTIV_API_KEY = os.getenv("AKTIVSIM_API_KEY", "").strip()
 
-SECRET_KEY = os.getenv(
-    "SECRET_KEY",
-    "donuz-change-this-secret-please"
-)
+SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret")
 
-ADMIN_USERNAME = os.getenv(
-    "ADMIN_USERNAME",
-    "admin"
-)
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-this-password")
 
-ADMIN_PASSWORD = os.getenv(
-    "ADMIN_PASSWORD",
-    "Donuz"
-)
+try:
+    USD_UZS = Decimal(os.getenv("USD_UZS", "12500"))
+except Exception:
+    USD_UZS = Decimal("12500")
 
-USD_UZS = Decimal(
-    os.getenv("USD_UZS", "11500")
-)
+try:
+    MARKUP_UZS = Decimal(os.getenv("MARKUP_UZS", "2000"))
+except Exception:
+    MARKUP_UZS = Decimal("2000")
 
-MARKUP_UZS = Decimal(
-    os.getenv("MARKUP_UZS", "4000")
-)
-
-PORT = int(
-    os.getenv("PORT", "10000")
-)
+PORT = int(os.getenv("PORT", "10000"))
 
 
 # =========================================================
@@ -65,19 +49,14 @@ PORT = int(
 # =========================================================
 
 app = Flask(__name__)
-
 app.secret_key = SECRET_KEY
 
-# Login sessiyasi doimiyroq saqlanadi
-app.config["SESSION_PERMANENT"] = True
-app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
-
-# Cookie sozlamalari
+# Login/sessionni saqlash uchun
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
-# HTTPS hostingda avtomatik ishlaydi
-if os.getenv("COOKIE_SECURE", "0") == "1":
+# HTTPS bo'lsa True
+if os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true":
     app.config["SESSION_COOKIE_SECURE"] = True
 
 
@@ -86,9 +65,9 @@ if os.getenv("COOKIE_SECURE", "0") == "1":
 # =========================================================
 
 def db():
-    c = sqlite3.connect(DB_PATH)
-    c.row_factory = sqlite3.Row
-    return c
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def now():
@@ -96,10 +75,10 @@ def now():
 
 
 def init_db():
-    c = db()
+    conn = db()
 
-    c.executescript("""
-    CREATE TABLE IF NOT EXISTS users(
+    conn.executescript("""
+    CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
         password_hash TEXT NOT NULL,
@@ -107,7 +86,7 @@ def init_db():
         created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS orders(
+    CREATE TABLE IF NOT EXISTS orders (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         kind TEXT NOT NULL,
@@ -116,12 +95,12 @@ def init_db():
         quantity INTEGER,
         months INTEGER,
         api_usd REAL DEFAULT 0,
-        sell_uzs INTEGER NOT NULL,
-        status TEXT NOT NULL,
+        sell_uzs INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'processing',
         created_at TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS transactions(
+    CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
         amount INTEGER NOT NULL,
@@ -131,8 +110,8 @@ def init_db():
     );
     """)
 
-    c.commit()
-    c.close()
+    conn.commit()
+    conn.close()
 
 
 # =========================================================
@@ -140,52 +119,49 @@ def init_db():
 # =========================================================
 
 def me():
-    uid = session.get("user_id")
+    user_id = session.get("user_id")
 
-    if not uid:
+    if not user_id:
         return None
+
+    conn = db()
 
     try:
-        c = db()
-        u = c.execute(
-            "SELECT * FROM users WHERE id=?",
-            (uid,)
+        user = conn.execute(
+            "SELECT * FROM users WHERE id = ?",
+            (user_id,)
         ).fetchone()
-        c.close()
+    finally:
+        conn.close()
 
-        return u
-
-    except Exception:
-        return None
+    return user
 
 
-def user_required(f):
-    @wraps(f)
-    def w(*args, **kwargs):
-
+def user_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
         if not me():
-            flash("Avval login qiling.", "error")
+            flash("Avval akkauntga kiring.", "error")
             return redirect(url_for("login"))
 
-        return f(*args, **kwargs)
+        return func(*args, **kwargs)
 
-    return w
+    return wrapper
 
 
-def admin_required(f):
-    @wraps(f)
-    def w(*args, **kwargs):
-
+def admin_required(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
         if not session.get("admin"):
             return redirect(url_for("admin_login"))
 
-        return f(*args, **kwargs)
+        return func(*args, **kwargs)
 
-    return w
+    return wrapper
 
 
 # =========================================================
-# FAZERCARDS API
+# API - FAZERCARDS
 # =========================================================
 
 def fazer(method, path, **kwargs):
@@ -193,7 +169,7 @@ def fazer(method, path, **kwargs):
     if not FAZER_API_KEY:
         return {
             "ok": False,
-            "error": "FazerCards API key sozlanmagan."
+            "error": "FAZER_API_KEY sozlanmagan."
         }
 
     headers = kwargs.pop("headers", {}) or {}
@@ -203,7 +179,7 @@ def fazer(method, path, **kwargs):
 
     try:
 
-        r = requests.request(
+        response = requests.request(
             method,
             FAZER_BASE + path,
             headers=headers,
@@ -212,26 +188,29 @@ def fazer(method, path, **kwargs):
         )
 
         try:
-            data = r.json()
+            data = response.json()
         except Exception:
             return {
                 "ok": False,
-                "error": f"FazerCards HTTP {r.status_code}"
+                "error": (
+                    f"FazerCards HTTP {response.status_code}: "
+                    f"{response.text[:500]}"
+                )
             }
 
         if not isinstance(data, dict):
             return {
-                "ok": r.status_code < 400,
-                "result": data
+                "ok": False,
+                "error": "API noto'g'ri javob qaytardi."
             }
 
-        if r.status_code >= 400:
+        if response.status_code >= 400:
 
-            data.setdefault("ok", False)
-            data.setdefault(
-                "error",
-                f"FazerCards HTTP {r.status_code}"
-            )
+            if "ok" not in data:
+                data["ok"] = False
+
+            if "error" not in data:
+                data["error"] = f"HTTP {response.status_code}"
 
         return data
 
@@ -239,19 +218,19 @@ def fazer(method, path, **kwargs):
 
         return {
             "ok": False,
-            "error": f"FazerCards ulanish xatosi: {str(e)}"
+            "error": f"FazerCards ulanish xatosi: {e}"
         }
 
     except Exception as e:
 
         return {
             "ok": False,
-            "error": f"FazerCards xatosi: {str(e)}"
+            "error": f"FazerCards xatosi: {e}"
         }
 
 
 # =========================================================
-# AKTIVSIM API
+# API - AKTIVSIM
 # =========================================================
 
 def aktiv(action, **params):
@@ -259,50 +238,51 @@ def aktiv(action, **params):
     if not AKTIV_API_KEY:
         return {
             "ok": False,
-            "error": "AktivSIM API key sozlanmagan."
+            "error": "AKTIVSIM_API_KEY sozlanmagan."
         }
 
-    params.update({
-        "action": action,
-        "apikey": AKTIV_API_KEY
-    })
+    params["action"] = action
+    params["apikey"] = AKTIV_API_KEY
 
     try:
 
-        r = requests.get(
+        response = requests.get(
             AKTIV_BASE,
             params=params,
             timeout=20
         )
 
         try:
-            data = r.json()
+            data = response.json()
         except Exception:
             return {
                 "ok": False,
-                "error": f"AktivSIM HTTP {r.status_code}"
+                "error": (
+                    f"AktivSIM HTTP {response.status_code}: "
+                    f"{response.text[:500]}"
+                )
             }
 
-        if isinstance(data, dict):
-            return data
+        if not isinstance(data, dict):
+            return {
+                "ok": False,
+                "error": "AktivSIM noto'g'ri javob qaytardi."
+            }
 
-        return {
-            "ok": True,
-            "result": data
-        }
+        return data
 
     except requests.RequestException as e:
 
         return {
             "ok": False,
-            "error": f"AktivSIM ulanish xatosi: {str(e)}"
+            "error": f"AktivSIM ulanish xatosi: {e}"
         }
 
     except Exception as e:
 
         return {
             "ok": False,
-            "error": f"AktivSIM xatosi: {str(e)}"
+            "error": f"AktivSIM xatosi: {e}"
         }
 
 
@@ -325,13 +305,9 @@ def price_usd_to_uzs(usd):
     )
 
 
-# =========================================================
-# TRANSACTIONS
-# =========================================================
+def add_tx(conn, user_id, amount, tx_type, note):
 
-def add_tx(c, user_id, amount, typ, note):
-
-    c.execute(
+    conn.execute(
         """
         INSERT INTO transactions
         (user_id, amount, type, note, created_at)
@@ -340,7 +316,7 @@ def add_tx(c, user_id, amount, typ, note):
         (
             user_id,
             amount,
-            typ,
+            tx_type,
             note,
             now()
         )
@@ -356,6 +332,7 @@ def globals_ctx():
 
     return {
         "me": me(),
+        "markup": int(MARKUP_UZS),
         "usd_uzs": USD_UZS
     }
 
@@ -388,10 +365,7 @@ def home():
 # REGISTER
 # =========================================================
 
-@app.route(
-    "/register",
-    methods=["GET", "POST"]
-)
+@app.route("/register", methods=["GET", "POST"])
 def register():
 
     if request.method == "POST":
@@ -409,7 +383,7 @@ def register():
         if len(username) < 3 or len(username) > 32:
 
             flash(
-                "Login 3-32 belgi bo'lsin.",
+                "Login 3-32 belgidan iborat bo'lsin.",
                 "error"
             )
 
@@ -428,27 +402,31 @@ def register():
                 "register.html"
             )
 
-        c = db()
+        conn = db()
 
         try:
 
-            c.execute(
+            password_hash = generate_password_hash(
+                password
+            )
+
+            conn.execute(
                 """
                 INSERT INTO users
-                (username, password_hash, created_at)
-                VALUES (?, ?, ?)
+                (username, password_hash, balance, created_at)
+                VALUES (?, ?, 0, ?)
                 """,
                 (
                     username,
-                    generate_password_hash(password),
+                    password_hash,
                     now()
                 )
             )
 
-            c.commit()
+            conn.commit()
 
             flash(
-                "Akkaunt yaratildi.",
+                "Akkaunt muvaffaqiyatli yaratildi.",
                 "success"
             )
 
@@ -459,13 +437,19 @@ def register():
         except sqlite3.IntegrityError:
 
             flash(
-                "Bu login band.",
+                "Bu login allaqachon band.",
+                "error"
+            )
+
+        except Exception as e:
+
+            flash(
+                f"Akkaunt yaratishda xato: {e}",
                 "error"
             )
 
         finally:
-
-            c.close()
+            conn.close()
 
     return render_template(
         "register.html"
@@ -476,10 +460,7 @@ def register():
 # LOGIN
 # =========================================================
 
-@app.route(
-    "/login",
-    methods=["GET", "POST"]
-)
+@app.route("/login", methods=["GET", "POST"])
 def login():
 
     if request.method == "POST":
@@ -494,30 +475,48 @@ def login():
             ""
         )
 
-        c = db()
+        conn = db()
 
-        u = c.execute(
-            "SELECT * FROM users WHERE username=?",
-            (username,)
-        ).fetchone()
+        try:
 
-        c.close()
+            user = conn.execute(
+                """
+                SELECT *
+                FROM users
+                WHERE username = ?
+                """,
+                (username,)
+            ).fetchone()
 
-        if u and check_password_hash(
-            u["password_hash"],
-            password
-        ):
+        finally:
+            conn.close()
 
-            # Eski sessionni tozalaymiz
-            session.clear()
+        if user:
 
-            # Yangi session
-            session["user_id"] = u["id"]
-            session.permanent = True
+            try:
+                password_ok = check_password_hash(
+                    user["password_hash"],
+                    password
+                )
+            except Exception:
+                password_ok = False
 
-            return redirect(
-                url_for("home")
-            )
+            if password_ok:
+
+                session.clear()
+
+                session["user_id"] = user["id"]
+
+                session.permanent = True
+
+                flash(
+                    "Akkauntga muvaffaqiyatli kirdingiz.",
+                    "success"
+                )
+
+                return redirect(
+                    url_for("home")
+                )
 
         flash(
             "Login yoki parol noto'g'ri.",
@@ -551,26 +550,29 @@ def logout():
 @user_required
 def profile():
 
-    u = me()
+    user = me()
 
-    c = db()
+    conn = db()
 
-    tx = c.execute(
-        """
-        SELECT *
-        FROM transactions
-        WHERE user_id=?
-        ORDER BY id DESC
-        LIMIT 50
-        """,
-        (u["id"],)
-    ).fetchall()
+    try:
 
-    c.close()
+        transactions = conn.execute(
+            """
+            SELECT *
+            FROM transactions
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT 50
+            """,
+            (user["id"],)
+        ).fetchall()
+
+    finally:
+        conn.close()
 
     return render_template(
         "profile.html",
-        tx=tx
+        tx=transactions
     )
 
 
@@ -582,21 +584,24 @@ def profile():
 @user_required
 def orders():
 
-    u = me()
+    user = me()
 
-    c = db()
+    conn = db()
 
-    rows = c.execute(
-        """
-        SELECT *
-        FROM orders
-        WHERE user_id=?
-        ORDER BY id DESC
-        """,
-        (u["id"],)
-    ).fetchall()
+    try:
 
-    c.close()
+        rows = conn.execute(
+            """
+            SELECT *
+            FROM orders
+            WHERE user_id = ?
+            ORDER BY id DESC
+            """,
+            (user["id"],)
+        ).fetchall()
+
+    finally:
+        conn.close()
 
     return render_template(
         "orders.html",
@@ -608,32 +613,38 @@ def orders():
 @user_required
 def order(order_id):
 
-    u = me()
+    user = me()
 
-    c = db()
+    conn = db()
 
-    o = c.execute(
-        """
-        SELECT *
-        FROM orders
-        WHERE id=?
-        AND user_id=?
-        """,
-        (
-            order_id,
-            u["id"]
+    try:
+
+        order_data = conn.execute(
+            """
+            SELECT *
+            FROM orders
+            WHERE id = ?
+            AND user_id = ?
+            """,
+            (
+                order_id,
+                user["id"]
+            )
+        ).fetchone()
+
+    finally:
+        conn.close()
+
+    if not order_data:
+
+        return (
+            "Buyurtma topilmadi",
+            404
         )
-    ).fetchone()
-
-    c.close()
-
-    if not o:
-
-        return "Buyurtma topilmadi", 404
 
     return render_template(
         "order.html",
-        o=o
+        o=order_data
     )
 
 
@@ -647,26 +658,29 @@ def order(order_id):
 @user_required
 def order_status(order_id):
 
-    u = me()
+    user = me()
 
-    c = db()
+    conn = db()
 
-    o = c.execute(
-        """
-        SELECT *
-        FROM orders
-        WHERE id=?
-        AND user_id=?
-        """,
-        (
-            order_id,
-            u["id"]
-        )
-    ).fetchone()
+    try:
 
-    c.close()
+        order_data = conn.execute(
+            """
+            SELECT *
+            FROM orders
+            WHERE id = ?
+            AND user_id = ?
+            """,
+            (
+                order_id,
+                user["id"]
+            )
+        ).fetchone()
 
-    if not o:
+    finally:
+        conn.close()
+
+    if not order_data:
 
         return jsonify(
             ok=False,
@@ -674,73 +688,94 @@ def order_status(order_id):
         ), 404
 
     # SIM
-    if o["kind"] == "sim":
+    if order_data["kind"] == "sim":
 
-        r = aktiv(
+        result = aktiv(
             "getCode",
-            order_id=o["provider_order_id"]
+            order_id=order_data["provider_order_id"]
         )
 
         if (
-            r.get("ok")
-            and r.get("status") == "finished"
+            result.get("ok")
+            and result.get("status") == "finished"
         ):
 
-            c = db()
+            conn = db()
 
-            c.execute(
-                """
-                UPDATE orders
-                SET status='finished'
-                WHERE id=?
-                """,
-                (order_id,)
-            )
+            try:
 
-            c.commit()
-            c.close()
+                conn.execute(
+                    """
+                    UPDATE orders
+                    SET status = 'finished'
+                    WHERE id = ?
+                    """,
+                    (order_id,)
+                )
 
-        return jsonify(r)
+                conn.commit()
+
+            finally:
+                conn.close()
+
+        return jsonify(result)
 
     # FAZER
-    r = fazer(
+    provider_id = order_data[
+        "provider_order_id"
+    ]
+
+    if not provider_id:
+
+        return jsonify(
+            ok=False,
+            error="Provider order ID mavjud emas."
+        )
+
+    result = fazer(
         "GET",
-        "/order/" +
-        str(o["provider_order_id"])
+        "/order/" + str(provider_id)
     )
 
-    if r.get("ok"):
+    if result.get("ok"):
 
-        data = (
-            r.get("order")
+        order_info = (
+            result.get("order")
+            or result.get("result")
             or {}
         )
 
-        status = (
-            data.get("status")
-            or r.get("status")
-        )
+        if isinstance(order_info, dict):
 
-        if status:
-
-            c = db()
-
-            c.execute(
-                """
-                UPDATE orders
-                SET status=?
-                WHERE id=?
-                """,
-                (
-                    status,
-                    order_id
-                )
+            status = (
+                order_info.get("status")
+                or result.get("status")
             )
 
-            c.commit()
-            c.close()
+            if status:
 
-    return jsonify(r)
+                conn = db()
+
+                try:
+
+                    conn.execute(
+                        """
+                        UPDATE orders
+                        SET status = ?
+                        WHERE id = ?
+                        """,
+                        (
+                            status,
+                            order_id
+                        )
+                    )
+
+                    conn.commit()
+
+                finally:
+                    conn.close()
+
+    return jsonify(result)
 
 
 # =========================================================
@@ -760,16 +795,16 @@ def buy_stars():
     ).strip()
 
     try:
-        qty = int(
+        quantity = int(
             request.form.get(
                 "quantity",
                 "0"
             )
         )
     except Exception:
-        qty = 0
+        quantity = 0
 
-    if not target or qty <= 0:
+    if not target or quantity <= 0:
 
         flash(
             "Username va Stars miqdorini kiriting.",
@@ -780,15 +815,15 @@ def buy_stars():
             url_for("home")
         )
 
-    q = fazer(
+    query = fazer(
         "GET",
         "/telegram/stars"
     )
 
-    if not q.get("ok"):
+    if not query.get("ok"):
 
         flash(
-            q.get(
+            query.get(
                 "error",
                 "Stars narxi olinmadi."
             ),
@@ -801,15 +836,15 @@ def buy_stars():
 
     try:
 
-        min_q = int(
-            q.get(
+        min_quantity = int(
+            query.get(
                 "min_amount",
                 50
             )
         )
 
-        max_q = int(
-            q.get(
+        max_quantity = int(
+            query.get(
                 "max_amount",
                 10000
             )
@@ -817,13 +852,17 @@ def buy_stars():
 
     except Exception:
 
-        min_q = 50
-        max_q = 10000
+        min_quantity = 50
+        max_quantity = 10000
 
-    if qty < min_q or qty > max_q:
+    if (
+        quantity < min_quantity
+        or quantity > max_quantity
+    ):
 
         flash(
-            f"Stars {min_q}-{max_q} oralig'ida bo'lishi kerak.",
+            f"Stars {min_quantity}-{max_quantity} "
+            "oralig'ida bo'lishi kerak.",
             "error"
         )
 
@@ -834,13 +873,18 @@ def buy_stars():
     try:
 
         price_per_star = Decimal(
-            str(q["price_per_star"])
+            str(query["price_per_star"])
+        )
+
+        total_usd = (
+            price_per_star
+            * quantity
         )
 
     except Exception:
 
         flash(
-            "Stars narxi API'dan noto'g'ri keldi.",
+            "Stars narxi noto'g'ri.",
             "error"
         )
 
@@ -848,20 +892,17 @@ def buy_stars():
             url_for("home")
         )
 
-    total_usd = (
-        price_per_star * qty
-    )
-
     sell = price_usd_to_uzs(
         total_usd
     )
 
-    u = me()
+    user = me()
 
-    if u["balance"] < sell:
+    if user["balance"] < sell:
 
         flash(
-            f"Balans yetarli emas. Kerak: {sell:,} so'm",
+            f"Balans yetarli emas. "
+            f"Kerak: {sell:,} so'm",
             "error"
         )
 
@@ -871,23 +912,24 @@ def buy_stars():
 
     payload = {
         "telegram_username": target,
-        "quantity": qty
+        "quantity": quantity
     }
 
-    r = fazer(
+    result = fazer(
         "POST",
         "/telegram/stars/buy",
         json=payload,
         headers={
-            "Idempotency-Key":
-                str(uuid.uuid4())
+            "Idempotency-Key": str(
+                uuid.uuid4()
+            )
         }
     )
 
-    if not r.get("ok"):
+    if not result.get("ok"):
 
         flash(
-            r.get(
+            result.get(
                 "error",
                 "Stars buyurtmasi xatosi."
             ),
@@ -898,46 +940,99 @@ def buy_stars():
             url_for("home")
         )
 
-    od = (
-        r.get("order")
-        or r.get("result")
+    provider_order = (
+        result.get("order")
+        or result.get("result")
         or {}
     )
 
+    if not isinstance(
+        provider_order,
+        dict
+    ):
+        provider_order = {}
+
     provider_id = str(
-        od.get("id")
-        or od.get("order_id")
+        provider_order.get("id")
+        or provider_order.get("order_id")
         or ""
     )
 
-    status = od.get(
+    status = provider_order.get(
         "status",
-        "processing"
-    )
-
-    c = db()
-
-    # Balansni kamaytirish
-    c.execute(
-        """
-        UPDATE users
-        SET balance=balance-?
-        WHERE id=?
-        AND balance>=?
-        """,
-        (
-            sell,
-            u["id"],
-            sell
+        result.get(
+            "status",
+            "processing"
         )
     )
 
-    if c.total_changes == 0:
+    conn = db()
 
-        c.close()
+    try:
+
+        conn.execute(
+            """
+            UPDATE users
+            SET balance = balance - ?
+            WHERE id = ?
+            AND balance >= ?
+            """,
+            (
+                sell,
+                user["id"],
+                sell
+            )
+        )
+
+        add_tx(
+            conn,
+            user["id"],
+            -sell,
+            "purchase",
+            f"Telegram Stars: {quantity}"
+        )
+
+        conn.execute(
+            """
+            INSERT INTO orders
+            (
+                user_id,
+                kind,
+                provider_order_id,
+                target,
+                quantity,
+                api_usd,
+                sell_uzs,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user["id"],
+                "stars",
+                provider_id,
+                target,
+                quantity,
+                float(total_usd),
+                sell,
+                status,
+                now()
+            )
+        )
+
+        conn.commit()
+
+        order_id = conn.execute(
+            "SELECT last_insert_rowid()"
+        ).fetchone()[0]
+
+    except Exception as e:
+
+        conn.rollback()
 
         flash(
-            "Balans yetarli emas.",
+            f"Buyurtmani saqlashda xato: {e}",
             "error"
         )
 
@@ -945,50 +1040,8 @@ def buy_stars():
             url_for("home")
         )
 
-    add_tx(
-        c,
-        u["id"],
-        -sell,
-        "purchase",
-        f"Telegram Stars: {qty}"
-    )
-
-    c.execute(
-        """
-        INSERT INTO orders
-        (
-            user_id,
-            kind,
-            provider_order_id,
-            target,
-            quantity,
-            api_usd,
-            sell_uzs,
-            status,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            u["id"],
-            "stars",
-            provider_id,
-            target,
-            qty,
-            float(total_usd),
-            sell,
-            status,
-            now()
-        )
-    )
-
-    c.commit()
-
-    oid = c.execute(
-        "SELECT last_insert_rowid()"
-    ).fetchone()[0]
-
-    c.close()
+    finally:
+        conn.close()
 
     flash(
         "Stars buyurtmasi yuborildi.",
@@ -998,7 +1051,7 @@ def buy_stars():
     return redirect(
         url_for(
             "order",
-            order_id=oid
+            order_id=order_id
         )
     )
 
@@ -1020,22 +1073,18 @@ def buy_premium():
     ).strip()
 
     try:
-
         months = int(
             request.form.get(
                 "months",
                 "0"
             )
         )
-
     except Exception:
-
         months = 0
 
-    if not target or months not in (
-        3,
-        6,
-        12
+    if (
+        not target
+        or months not in (3, 6, 12)
     ):
 
         flash(
@@ -1047,15 +1096,15 @@ def buy_premium():
             url_for("home")
         )
 
-    q = fazer(
+    query = fazer(
         "GET",
         "/telegram/premium"
     )
 
-    if not q.get("ok"):
+    if not query.get("ok"):
 
         flash(
-            q.get(
+            query.get(
                 "error",
                 "Premium narxi olinmadi."
             ),
@@ -1067,28 +1116,34 @@ def buy_premium():
         )
 
     plans = (
-        q.get("plans")
-        or q.get("result")
+        query.get("plans")
+        or query.get("result")
         or []
     )
 
-    plan = None
+    if not isinstance(
+        plans,
+        list
+    ):
+        plans = []
 
-    for p in plans:
+    selected_plan = None
+
+    for plan in plans:
 
         try:
 
             if int(
-                p.get("months", 0)
+                plan.get("months", 0)
             ) == months:
 
-                plan = p
+                selected_plan = plan
                 break
 
         except Exception:
-            pass
+            continue
 
-    if not plan:
+    if not selected_plan:
 
         flash(
             "Bu Premium rejasi API'da yo'q.",
@@ -1102,13 +1157,17 @@ def buy_premium():
     try:
 
         total_usd = Decimal(
-            str(plan["price_usd"])
+            str(
+                selected_plan[
+                    "price_usd"
+                ]
+            )
         )
 
     except Exception:
 
         flash(
-            "Premium narxi API'dan noto'g'ri keldi.",
+            "Premium narxi noto'g'ri.",
             "error"
         )
 
@@ -1120,12 +1179,13 @@ def buy_premium():
         total_usd
     )
 
-    u = me()
+    user = me()
 
-    if u["balance"] < sell:
+    if user["balance"] < sell:
 
         flash(
-            f"Balans yetarli emas. Kerak: {sell:,} so'm",
+            f"Balans yetarli emas. "
+            f"Kerak: {sell:,} so'm",
             "error"
         )
 
@@ -1133,7 +1193,7 @@ def buy_premium():
             url_for("home")
         )
 
-    r = fazer(
+    result = fazer(
         "POST",
         "/telegram/premium/buy",
         json={
@@ -1141,15 +1201,16 @@ def buy_premium():
             "months": months
         },
         headers={
-            "Idempotency-Key":
-                str(uuid.uuid4())
+            "Idempotency-Key": str(
+                uuid.uuid4()
+            )
         }
     )
 
-    if not r.get("ok"):
+    if not result.get("ok"):
 
         flash(
-            r.get(
+            result.get(
                 "error",
                 "Premium buyurtmasi xatosi."
             ),
@@ -1160,45 +1221,99 @@ def buy_premium():
             url_for("home")
         )
 
-    od = (
-        r.get("order")
-        or r.get("result")
+    provider_order = (
+        result.get("order")
+        or result.get("result")
         or {}
     )
 
+    if not isinstance(
+        provider_order,
+        dict
+    ):
+        provider_order = {}
+
     provider_id = str(
-        od.get("id")
-        or od.get("order_id")
+        provider_order.get("id")
+        or provider_order.get("order_id")
         or ""
     )
 
-    status = od.get(
+    status = provider_order.get(
         "status",
-        "processing"
-    )
-
-    c = db()
-
-    c.execute(
-        """
-        UPDATE users
-        SET balance=balance-?
-        WHERE id=?
-        AND balance>=?
-        """,
-        (
-            sell,
-            u["id"],
-            sell
+        result.get(
+            "status",
+            "processing"
         )
     )
 
-    if c.total_changes == 0:
+    conn = db()
 
-        c.close()
+    try:
+
+        conn.execute(
+            """
+            UPDATE users
+            SET balance = balance - ?
+            WHERE id = ?
+            AND balance >= ?
+            """,
+            (
+                sell,
+                user["id"],
+                sell
+            )
+        )
+
+        add_tx(
+            conn,
+            user["id"],
+            -sell,
+            "purchase",
+            f"Telegram Premium: {months} oy"
+        )
+
+        conn.execute(
+            """
+            INSERT INTO orders
+            (
+                user_id,
+                kind,
+                provider_order_id,
+                target,
+                months,
+                api_usd,
+                sell_uzs,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user["id"],
+                "premium",
+                provider_id,
+                target,
+                months,
+                float(total_usd),
+                sell,
+                status,
+                now()
+            )
+        )
+
+        conn.commit()
+
+        order_id = conn.execute(
+            "SELECT last_insert_rowid()"
+        ).fetchone()[0]
+
+    except Exception as e:
+
+        conn.rollback()
 
         flash(
-            "Balans yetarli emas.",
+            f"Buyurtmani saqlashda xato: {e}",
             "error"
         )
 
@@ -1206,50 +1321,8 @@ def buy_premium():
             url_for("home")
         )
 
-    add_tx(
-        c,
-        u["id"],
-        -sell,
-        "purchase",
-        f"Telegram Premium: {months} oy"
-    )
-
-    c.execute(
-        """
-        INSERT INTO orders
-        (
-            user_id,
-            kind,
-            provider_order_id,
-            target,
-            months,
-            api_usd,
-            sell_uzs,
-            status,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            u["id"],
-            "premium",
-            provider_id,
-            target,
-            months,
-            float(total_usd),
-            sell,
-            status,
-            now()
-        )
-    )
-
-    c.commit()
-
-    oid = c.execute(
-        "SELECT last_insert_rowid()"
-    ).fetchone()[0]
-
-    c.close()
+    finally:
+        conn.close()
 
     flash(
         "Premium buyurtmasi yuborildi.",
@@ -1259,32 +1332,38 @@ def buy_premium():
     return redirect(
         url_for(
             "order",
-            order_id=oid
+            order_id=order_id
         )
     )
 
 
 # =========================================================
-# AKTIVSIM
+# AKTIV SIM
 # =========================================================
 
 @app.route("/sim")
 @user_required
 def sim():
 
-    r = aktiv(
+    result = aktiv(
         "getCountries"
     )
 
-    countries = r.get(
+    countries = result.get(
         "result",
         []
     )
 
+    if not isinstance(
+        countries,
+        list
+    ):
+        countries = []
+
     return render_template(
         "sim.html",
         countries=countries,
-        error=r.get("error")
+        error=result.get("error")
     )
 
 
@@ -1295,20 +1374,32 @@ def sim():
 @user_required
 def sim_buy(country):
 
-    r = aktiv(
+    country = country.upper()
+
+    result = aktiv(
         "getCountries"
     )
 
-    cs = r.get(
+    countries = result.get(
         "result",
         []
     )
 
+    if not isinstance(
+        countries,
+        list
+    ):
+        countries = []
+
     item = next(
         (
-            x for x in cs
-            if x.get("country_code")
-            == country.upper()
+            x for x in countries
+            if str(
+                x.get(
+                    "country_code",
+                    ""
+                )
+            ).upper() == country
         ),
         None
     )
@@ -1325,12 +1416,9 @@ def sim_buy(country):
         )
 
     try:
-
-        sell = (
-            int(item["price"])
-            + int(MARKUP_UZS)
+        provider_price = int(
+            item["price"]
         )
-
     except Exception:
 
         flash(
@@ -1342,12 +1430,18 @@ def sim_buy(country):
             url_for("sim")
         )
 
-    u = me()
+    sell = (
+        provider_price
+        + int(MARKUP_UZS)
+    )
 
-    if u["balance"] < sell:
+    user = me()
+
+    if user["balance"] < sell:
 
         flash(
-            f"Balans yetarli emas. Kerak: {sell:,} so'm",
+            f"Balans yetarli emas. "
+            f"Kerak: {sell:,} so'm",
             "error"
         )
 
@@ -1355,19 +1449,19 @@ def sim_buy(country):
             url_for("sim")
         )
 
-    b = aktiv(
+    buy_result = aktiv(
         "buyNumber",
-        country_code=country.upper()
+        country_code=country
     )
 
-    if not b.get("ok"):
+    if not buy_result.get("ok"):
 
         flash(
-            b.get(
+            buy_result.get(
                 "error",
-                b.get(
+                buy_result.get(
                     "msg",
-                    "AktivSIM xatosi"
+                    "AktivSIM xatosi."
                 )
             ),
             "error"
@@ -1377,33 +1471,96 @@ def sim_buy(country):
             url_for("sim")
         )
 
-    x = b.get(
+    data = buy_result.get(
         "result",
         {}
     )
 
-    c = db()
+    if not isinstance(
+        data,
+        dict
+    ):
+        data = {}
 
-    c.execute(
-        """
-        UPDATE users
-        SET balance=balance-?
-        WHERE id=?
-        AND balance>=?
-        """,
-        (
-            sell,
-            u["id"],
-            sell
+    provider_id = str(
+        data.get(
+            "order_id",
+            ""
         )
     )
 
-    if c.total_changes == 0:
+    phone = str(
+        data.get(
+            "phone",
+            ""
+        )
+    )
 
-        c.close()
+    conn = db()
+
+    try:
+
+        conn.execute(
+            """
+            UPDATE users
+            SET balance = balance - ?
+            WHERE id = ?
+            AND balance >= ?
+            """,
+            (
+                sell,
+                user["id"],
+                sell
+            )
+        )
+
+        add_tx(
+            conn,
+            user["id"],
+            -sell,
+            "purchase",
+            f"SIM: {phone}"
+        )
+
+        conn.execute(
+            """
+            INSERT INTO orders
+            (
+                user_id,
+                kind,
+                provider_order_id,
+                target,
+                api_usd,
+                sell_uzs,
+                status,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user["id"],
+                "sim",
+                provider_id,
+                phone,
+                0,
+                sell,
+                "waiting",
+                now()
+            )
+        )
+
+        conn.commit()
+
+        order_id = conn.execute(
+            "SELECT last_insert_rowid()"
+        ).fetchone()[0]
+
+    except Exception as e:
+
+        conn.rollback()
 
         flash(
-            "Balans yetarli emas.",
+            f"Buyurtmani saqlashda xato: {e}",
             "error"
         )
 
@@ -1411,67 +1568,19 @@ def sim_buy(country):
             url_for("sim")
         )
 
-    add_tx(
-        c,
-        u["id"],
-        -sell,
-        "purchase",
-        f"SIM: {x.get('phone', '')}"
-    )
-
-    c.execute(
-        """
-        INSERT INTO orders
-        (
-            user_id,
-            kind,
-            provider_order_id,
-            target,
-            api_usd,
-            sell_uzs,
-            status,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            u["id"],
-            "sim",
-            str(
-                x.get(
-                    "order_id",
-                    ""
-                )
-            ),
-            x.get(
-                "phone",
-                ""
-            ),
-            0,
-            sell,
-            "waiting",
-            now()
-        )
-    )
-
-    c.commit()
-
-    oid = c.execute(
-        "SELECT last_insert_rowid()"
-    ).fetchone()[0]
-
-    c.close()
+    finally:
+        conn.close()
 
     return redirect(
         url_for(
             "order",
-            order_id=oid
+            order_id=order_id
         )
     )
 
 
 # =========================================================
-# TOPUP
+# TOP UP
 # =========================================================
 
 @app.route("/topup")
@@ -1480,18 +1589,6 @@ def topup():
 
     return render_template(
         "topup.html"
-    )
-
-
-# =========================================================
-# HELP
-# =========================================================
-
-@app.route("/help")
-def help_page():
-
-    return render_template(
-        "help.html"
     )
 
 
@@ -1510,7 +1607,7 @@ def admin_login():
         username = request.form.get(
             "username",
             ""
-        )
+        ).strip()
 
         password = request.form.get(
             "password",
@@ -1525,6 +1622,7 @@ def admin_login():
             session.clear()
 
             session["admin"] = True
+
             session.permanent = True
 
             return redirect(
@@ -1532,7 +1630,7 @@ def admin_login():
             )
 
         flash(
-            "Admin login/parol noto'g'ri.",
+            "Admin login yoki parol noto'g'ri.",
             "error"
         )
 
@@ -1566,78 +1664,109 @@ def admin_logout():
 @admin_required
 def admin():
 
-    c = db()
+    conn = db()
 
-    users = c.execute(
-        "SELECT COUNT(*) FROM users"
-    ).fetchone()[0]
+    try:
 
-    orders_count = c.execute(
-        "SELECT COUNT(*) FROM orders"
-    ).fetchone()[0]
+        users = conn.execute(
+            "SELECT COUNT(*) FROM users"
+        ).fetchone()[0]
 
-    sales = c.execute(
-        """
-        SELECT COALESCE(
-            SUM(-amount),
-            0
+        orders_count = conn.execute(
+            "SELECT COUNT(*) FROM orders"
+        ).fetchone()[0]
+
+        sales = conn.execute(
+            """
+            SELECT COALESCE(
+                SUM(-amount),
+                0
+            )
+            FROM transactions
+            WHERE type = 'purchase'
+            """
+        ).fetchone()[0]
+
+        deposits = conn.execute(
+            """
+            SELECT COALESCE(
+                SUM(amount),
+                0
+            )
+            FROM transactions
+            WHERE amount > 0
+            """
+        ).fetchone()[0]
+
+        # Foydani xavfsiz hisoblash
+        profit = conn.execute(
+            """
+            SELECT COALESCE(
+                SUM(
+                    sell_uzs
+                    -
+                    (api_usd * ?)
+                ),
+                0
+            )
+            FROM orders
+            WHERE kind IN ('stars', 'premium')
+            """,
+            (
+                float(USD_UZS),
+            )
+        ).fetchone()[0]
+
+    except Exception as e:
+
+        # Admin sahifasi API yoki DB sababli
+        # yiqilib ketmasin
+        users = 0
+        orders_count = 0
+        sales = 0
+        deposits = 0
+        profit = 0
+
+        flash(
+            f"Admin ma'lumotlarini olishda xato: {e}",
+            "error"
         )
-        FROM transactions
-        WHERE type='purchase'
-        """
-    ).fetchone()[0]
 
-    deposits = c.execute(
-        """
-        SELECT COALESCE(
-            SUM(amount),
-            0
-        )
-        FROM transactions
-        WHERE amount>0
-        """
-    ).fetchone()[0]
+    finally:
+        conn.close()
 
-    profit = c.execute(
-        """
-        SELECT COALESCE(
-            SUM(
-                sell_uzs
-                - api_usd * ?
-            ),
-            0
-        )
-        FROM orders
-        WHERE kind IN (
-            'stars',
-            'premium'
-        )
-        """,
-        (
-            float(USD_UZS),
-        )
-    ).fetchone()[0]
+    # Fazer balansini olish
+    fazer_balance = None
+    fazer_error = None
 
-    c.close()
+    try:
 
-    fb = fazer(
-        "GET",
-        "/balance"
-    )
+        balance_result = fazer(
+            "GET",
+            "/balance"
+        )
+
+        fazer_balance = balance_result.get(
+            "balance"
+        )
+
+        fazer_error = balance_result.get(
+            "error"
+        )
+
+    except Exception as e:
+
+        fazer_error = str(e)
 
     return render_template(
         "admin.html",
         users=users,
         orders_count=orders_count,
-        sales=sales,
-        deposits=deposits,
-        profit=int(profit),
-        fazer_balance=fb.get(
-            "balance"
-        ),
-        fazer_error=fb.get(
-            "error"
-        )
+        sales=int(sales or 0),
+        deposits=int(deposits or 0),
+        profit=int(profit or 0),
+        fazer_balance=fazer_balance,
+        fazer_error=fazer_error
     )
 
 
@@ -1649,21 +1778,24 @@ def admin():
 @admin_required
 def admin_users():
 
-    c = db()
+    conn = db()
 
-    rows = c.execute(
-        """
-        SELECT *
-        FROM users
-        ORDER BY id DESC
-        """
-    ).fetchall()
+    try:
 
-    c.close()
+        users = conn.execute(
+            """
+            SELECT *
+            FROM users
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+    finally:
+        conn.close()
 
     return render_template(
         "admin_users.html",
-        users=rows
+        users=users
     )
 
 
@@ -1691,72 +1823,109 @@ def admin_balance(uid):
 
         amount = 0
 
-    c = db()
+    note = request.form.get(
+        "note",
+        "Admin balans o'zgarishi"
+    )
 
-    u = c.execute(
-        "SELECT * FROM users WHERE id=?",
-        (uid,)
-    ).fetchone()
+    conn = db()
 
-    if not u:
+    try:
 
-        c.close()
-
-        return (
-            "User topilmadi",
-            404
-        )
-
-    if u["balance"] + amount < 0:
-
-        flash(
-            "Balans manfiy bo'lmaydi.",
-            "error"
-        )
-
-    elif amount == 0:
-
-        flash(
-            "Summa 0 bo'lmasin.",
-            "error"
-        )
-
-    else:
-
-        c.execute(
+        user = conn.execute(
             """
-            UPDATE users
-            SET balance=balance+?
-            WHERE id=?
+            SELECT *
+            FROM users
+            WHERE id = ?
             """,
-            (
+            (uid,)
+        ).fetchone()
+
+        if not user:
+
+            flash(
+                "User topilmadi.",
+                "error"
+            )
+
+            return redirect(
+                url_for("admin_users")
+            )
+
+        new_balance = (
+            user["balance"]
+            + amount
+        )
+
+        if new_balance < 0:
+
+            flash(
+                "Balans manfiy bo'lishi mumkin emas.",
+                "error"
+            )
+
+        elif amount == 0:
+
+            flash(
+                "Summa 0 bo'lmasin.",
+                "error"
+            )
+
+        else:
+
+            conn.execute(
+                """
+                UPDATE users
+                SET balance = ?
+                WHERE id = ?
+                """,
+                (
+                    new_balance,
+                    uid
+                )
+            )
+
+            add_tx(
+                conn,
+                uid,
                 amount,
-                uid
+                "admin",
+                note
             )
-        )
 
-        add_tx(
-            c,
-            uid,
-            amount,
-            "admin",
-            request.form.get(
-                "note",
-                "Admin balans o'zgarishi"
+            conn.commit()
+
+            flash(
+                "Balans muvaffaqiyatli yangilandi.",
+                "success"
             )
-        )
 
-        c.commit()
+    except Exception as e:
+
+        conn.rollback()
 
         flash(
-            "Balans yangilandi.",
-            "success"
+            f"Balans o'zgartirishda xato: {e}",
+            "error"
         )
 
-    c.close()
+    finally:
+        conn.close()
 
     return redirect(
         url_for("admin_users")
+    )
+
+
+# =========================================================
+# HELP
+# =========================================================
+
+@app.route("/help")
+def help_page():
+
+    return render_template(
+        "help.html"
     )
 
 
@@ -1772,11 +1941,12 @@ def robots():
         "Allow: /\n"
         "Disallow: /admin\n"
         "Disallow: /profile\n"
-        "Disallow: /orders\n"
-    ), 200, {
-        "Content-Type":
-            "text/plain"
-    }
+        "Disallow: /orders\n",
+        200,
+        {
+            "Content-Type": "text/plain"
+        }
+    )
 
 
 # =========================================================
@@ -1784,17 +1954,19 @@ def robots():
 # =========================================================
 
 @app.errorhandler(404)
-def not_found(e):
+def page_not_found(error):
 
     return (
-        "Sahifa topilmadi",
+        "Sahifa topilmadi.",
         404
     )
 
 
 @app.errorhandler(500)
-def internal_error(e):
+def internal_error(error):
 
+    # Hostingda 500 bo'lganda foydalanuvchiga
+    # chiroyli xabar chiqadi.
     return (
         "Server xatosi. Iltimos keyinroq urinib ko'ring.",
         500
@@ -1810,11 +1982,13 @@ if __name__ == "__main__":
     init_db()
 
     print("=" * 40)
-    print("DONUZ SHOP ISHGA TUSHDI")
+    print("DONUZ SHOP ISHGA TUSHMOQDA")
+    print("=" * 40)
     print("Database:", DB_PATH)
     print("Port:", PORT)
     print("Fazer API:", bool(FAZER_API_KEY))
     print("AktivSIM API:", bool(AKTIV_API_KEY))
+    print("Admin:", ADMIN_USERNAME)
     print("=" * 40)
 
     app.run(
