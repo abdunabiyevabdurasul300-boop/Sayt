@@ -29,7 +29,7 @@ AKTIV_API_KEY = os.getenv("AKTIVSIM_API_KEY", "").strip()
 SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret")
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip()
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-this-password")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Donuz1")
 
 try:
     USD_UZS = Decimal(os.getenv("USD_UZS", "12500"))
