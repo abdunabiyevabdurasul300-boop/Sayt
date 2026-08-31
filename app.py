@@ -44,7 +44,7 @@ ADMIN_USERNAME = os.getenv(
 
 ADMIN_PASSWORD = os.getenv(
     "ADMIN_PASSWORD",
-    "Donuz2bot"
+    "Donuz"
 )
 
 USD_UZS = Decimal(
