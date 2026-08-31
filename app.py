@@ -1,14 +1,27 @@
 import os
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 from functools import wraps
 
 import requests
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
+from flask import (
+    Flask,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    session,
+    flash,
+    jsonify
+)
 from werkzeug.security import generate_password_hash, check_password_hash
 
+
+# =========================================================
+# SETTINGS
+# =========================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "shop.db")
@@ -19,21 +32,58 @@ AKTIV_BASE = "https://ws2524.wineclo.com/AktivSimBot/api/v2/"
 FAZER_API_KEY = os.getenv("FAZER_API_KEY", "fc_e2a3d96eda3c7f0bd6b4a139").strip()
 AKTIV_API_KEY = os.getenv("AKTIVSIM_API_KEY", "YTvijKX0w1FHVGTv19i54ahe").strip()
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret")
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "change-this-password")
+SECRET_KEY = os.getenv(
+    "SECRET_KEY",
+    "donuz-change-this-secret-please"
+)
 
-USD_UZS = Decimal(os.getenv("USD_UZS", "11600"))
-MARKUP_UZS = Decimal(os.getenv("MARKUP_UZS", "4000"))
+ADMIN_USERNAME = os.getenv(
+    "ADMIN_USERNAME",
+    "admin"
+)
 
+ADMIN_PASSWORD = os.getenv(
+    "ADMIN_PASSWORD",
+    "change-this-password"
+)
+
+USD_UZS = Decimal(
+    os.getenv("USD_UZS", "12500")
+)
+
+MARKUP_UZS = Decimal(
+    os.getenv("MARKUP_UZS", "2000")
+)
+
+PORT = int(
+    os.getenv("PORT", "10000")
+)
+
+
+# =========================================================
+# FLASK
+# =========================================================
 
 app = Flask(__name__)
+
 app.secret_key = SECRET_KEY
 
+# Login sessiyasi doimiyroq saqlanadi
+app.config["SESSION_PERMANENT"] = True
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
 
-# =========================
+# Cookie sozlamalari
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+# HTTPS hostingda avtomatik ishlaydi
+if os.getenv("COOKIE_SECURE", "0") == "1":
+    app.config["SESSION_COOKIE_SECURE"] = True
+
+
+# =========================================================
 # DATABASE
-# =========================
+# =========================================================
 
 def db():
     c = sqlite3.connect(DB_PATH)
@@ -85,17 +135,9 @@ def init_db():
     c.close()
 
 
-# MUHIM:
-# Hosting/Gunicorn orqali ishga tushganda ham database yaratiladi.
-try:
-    init_db()
-except Exception as e:
-    print("DATABASE ERROR:", e)
-
-
-# =========================
+# =========================================================
 # USER
-# =========================
+# =========================================================
 
 def me():
     uid = session.get("user_id")
@@ -110,48 +152,48 @@ def me():
             (uid,)
         ).fetchone()
         c.close()
+
         return u
 
-    except Exception as e:
-        print("ME ERROR:", e)
+    except Exception:
         return None
 
 
 def user_required(f):
     @wraps(f)
-    def w(*a, **k):
+    def w(*args, **kwargs):
 
         if not me():
             flash("Avval login qiling.", "error")
             return redirect(url_for("login"))
 
-        return f(*a, **k)
+        return f(*args, **kwargs)
 
     return w
 
 
 def admin_required(f):
     @wraps(f)
-    def w(*a, **k):
+    def w(*args, **kwargs):
 
         if not session.get("admin"):
             return redirect(url_for("admin_login"))
 
-        return f(*a, **k)
+        return f(*args, **kwargs)
 
     return w
 
 
-# =========================
-# FAZERCARDS
-# =========================
+# =========================================================
+# FAZERCARDS API
+# =========================================================
 
 def fazer(method, path, **kwargs):
 
     if not FAZER_API_KEY:
         return {
             "ok": False,
-            "error": "FAZER_API_KEY sozlanmagan"
+            "error": "FazerCards API key sozlanmagan."
         }
 
     headers = kwargs.pop("headers", {}) or {}
@@ -171,10 +213,10 @@ def fazer(method, path, **kwargs):
 
         try:
             data = r.json()
-        except ValueError:
+        except Exception:
             return {
                 "ok": False,
-                "error": f"FazerCards HTTP {r.status_code}: {r.text[:300]}"
+                "error": f"FazerCards HTTP {r.status_code}"
             }
 
         if not isinstance(data, dict):
@@ -184,6 +226,7 @@ def fazer(method, path, **kwargs):
             }
 
         if r.status_code >= 400:
+
             data.setdefault("ok", False)
             data.setdefault(
                 "error",
@@ -194,33 +237,29 @@ def fazer(method, path, **kwargs):
 
     except requests.RequestException as e:
 
-        print("FAZER API ERROR:", e)
-
         return {
             "ok": False,
-            "error": str(e)
+            "error": f"FazerCards ulanish xatosi: {str(e)}"
         }
 
     except Exception as e:
 
-        print("FAZER ERROR:", e)
-
         return {
             "ok": False,
-            "error": str(e)
+            "error": f"FazerCards xatosi: {str(e)}"
         }
 
 
-# =========================
-# AKTIVSIM
-# =========================
+# =========================================================
+# AKTIVSIM API
+# =========================================================
 
 def aktiv(action, **params):
 
     if not AKTIV_API_KEY:
         return {
             "ok": False,
-            "error": "AKTIVSIM_API_KEY sozlanmagan"
+            "error": "AktivSIM API key sozlanmagan."
         }
 
     params.update({
@@ -237,48 +276,58 @@ def aktiv(action, **params):
         )
 
         try:
-            return r.json()
-        except ValueError:
+            data = r.json()
+        except Exception:
             return {
                 "ok": False,
-                "error": f"AktivSIM HTTP {r.status_code}: {r.text[:300]}"
+                "error": f"AktivSIM HTTP {r.status_code}"
             }
+
+        if isinstance(data, dict):
+            return data
+
+        return {
+            "ok": True,
+            "result": data
+        }
 
     except requests.RequestException as e:
 
-        print("AKTIV API ERROR:", e)
-
         return {
             "ok": False,
-            "error": str(e)
+            "error": f"AktivSIM ulanish xatosi: {str(e)}"
         }
 
     except Exception as e:
 
-        print("AKTIV ERROR:", e)
-
         return {
             "ok": False,
-            "error": str(e)
+            "error": f"AktivSIM xatosi: {str(e)}"
         }
 
 
-# =========================
+# =========================================================
 # PRICE
-# =========================
+# =========================================================
 
 def price_usd_to_uzs(usd):
 
+    result = (
+        Decimal(str(usd)) * USD_UZS
+        + MARKUP_UZS
+    )
+
     return int(
-        (
-            Decimal(str(usd)) * USD_UZS
-            + MARKUP_UZS
-        ).quantize(
+        result.quantize(
             Decimal("1"),
             rounding=ROUND_HALF_UP
         )
     )
 
+
+# =========================================================
+# TRANSACTIONS
+# =========================================================
 
 def add_tx(c, user_id, amount, typ, note):
 
@@ -298,23 +347,22 @@ def add_tx(c, user_id, amount, typ, note):
     )
 
 
-# =========================
+# =========================================================
 # TEMPLATE GLOBALS
-# =========================
+# =========================================================
 
 @app.context_processor
 def globals_ctx():
 
     return {
         "me": me(),
-        "markup": int(MARKUP_UZS),
         "usd_uzs": USD_UZS
     }
 
 
-# =========================
+# =========================================================
 # HOME
-# =========================
+# =========================================================
 
 @app.route("/")
 def home():
@@ -336,11 +384,14 @@ def home():
     )
 
 
-# =========================
+# =========================================================
 # REGISTER
-# =========================
+# =========================================================
 
-@app.route("/register", methods=["GET", "POST"])
+@app.route(
+    "/register",
+    methods=["GET", "POST"]
+)
 def register():
 
     if request.method == "POST":
@@ -377,26 +428,19 @@ def register():
                 "register.html"
             )
 
-        c = None
+        c = db()
 
         try:
-
-            c = db()
-
-            password_hash = generate_password_hash(
-                password
-            )
 
             c.execute(
                 """
                 INSERT INTO users
-                (username, password_hash, balance, created_at)
-                VALUES (?, ?, ?, ?)
+                (username, password_hash, created_at)
+                VALUES (?, ?, ?)
                 """,
                 (
                     username,
-                    password_hash,
-                    0,
+                    generate_password_hash(password),
                     now()
                 )
             )
@@ -404,7 +448,7 @@ def register():
             c.commit()
 
             flash(
-                "Akkaunt yaratildi. Endi login qiling.",
+                "Akkaunt yaratildi.",
                 "success"
             )
 
@@ -419,30 +463,23 @@ def register():
                 "error"
             )
 
-        except Exception as e:
-
-            print("REGISTER ERROR:", e)
-
-            flash(
-                "Akkaunt yaratishda xatolik: " + str(e),
-                "error"
-            )
-
         finally:
 
-            if c:
-                c.close()
+            c.close()
 
     return render_template(
         "register.html"
     )
 
 
-# =========================
+# =========================================================
 # LOGIN
-# =========================
+# =========================================================
 
-@app.route("/login", methods=["GET", "POST"])
+@app.route(
+    "/login",
+    methods=["GET", "POST"]
+)
 def login():
 
     if request.method == "POST":
@@ -457,55 +494,44 @@ def login():
             ""
         )
 
-        try:
+        c = db()
 
-            c = db()
+        u = c.execute(
+            "SELECT * FROM users WHERE username=?",
+            (username,)
+        ).fetchone()
 
-            u = c.execute(
-                """
-                SELECT *
-                FROM users
-                WHERE username=?
-                """,
-                (username,)
-            ).fetchone()
+        c.close()
 
-            c.close()
+        if u and check_password_hash(
+            u["password_hash"],
+            password
+        ):
 
-            if u and check_password_hash(
-                u["password_hash"],
-                password
-            ):
+            # Eski sessionni tozalaymiz
+            session.clear()
 
-                session.clear()
-                session["user_id"] = u["id"]
+            # Yangi session
+            session["user_id"] = u["id"]
+            session.permanent = True
 
-                return redirect(
-                    url_for("home")
-                )
-
-            flash(
-                "Login yoki parol noto'g'ri.",
-                "error"
+            return redirect(
+                url_for("home")
             )
 
-        except Exception as e:
-
-            print("LOGIN ERROR:", e)
-
-            flash(
-                "Login xatosi: " + str(e),
-                "error"
-            )
+        flash(
+            "Login yoki parol noto'g'ri.",
+            "error"
+        )
 
     return render_template(
         "login.html"
     )
 
 
-# =========================
+# =========================================================
 # LOGOUT
-# =========================
+# =========================================================
 
 @app.route("/logout")
 def logout():
@@ -517,13 +543,15 @@ def logout():
     )
 
 
-# =========================
+# =========================================================
 # PROFILE
-# =========================
+# =========================================================
 
 @app.route("/profile")
 @user_required
 def profile():
+
+    u = me()
 
     c = db()
 
@@ -535,7 +563,7 @@ def profile():
         ORDER BY id DESC
         LIMIT 50
         """,
-        (me()["id"],)
+        (u["id"],)
     ).fetchall()
 
     c.close()
@@ -546,13 +574,15 @@ def profile():
     )
 
 
-# =========================
+# =========================================================
 # ORDERS
-# =========================
+# =========================================================
 
 @app.route("/orders")
 @user_required
 def orders():
+
+    u = me()
 
     c = db()
 
@@ -563,7 +593,7 @@ def orders():
         WHERE user_id=?
         ORDER BY id DESC
         """,
-        (me()["id"],)
+        (u["id"],)
     ).fetchall()
 
     c.close()
@@ -578,23 +608,27 @@ def orders():
 @user_required
 def order(order_id):
 
+    u = me()
+
     c = db()
 
     o = c.execute(
         """
         SELECT *
         FROM orders
-        WHERE id=? AND user_id=?
+        WHERE id=?
+        AND user_id=?
         """,
         (
             order_id,
-            me()["id"]
+            u["id"]
         )
     ).fetchone()
 
     c.close()
 
     if not o:
+
         return "Buyurtma topilmadi", 404
 
     return render_template(
@@ -603,13 +637,17 @@ def order(order_id):
     )
 
 
-# =========================
+# =========================================================
 # ORDER STATUS
-# =========================
+# =========================================================
 
-@app.route("/api/order/<int:order_id>/status")
+@app.route(
+    "/api/order/<int:order_id>/status"
+)
 @user_required
 def order_status(order_id):
+
+    u = me()
 
     c = db()
 
@@ -617,11 +655,12 @@ def order_status(order_id):
         """
         SELECT *
         FROM orders
-        WHERE id=? AND user_id=?
+        WHERE id=?
+        AND user_id=?
         """,
         (
             order_id,
-            me()["id"]
+            u["id"]
         )
     ).fetchone()
 
@@ -634,6 +673,7 @@ def order_status(order_id):
             error="Buyurtma topilmadi"
         ), 404
 
+    # SIM
     if o["kind"] == "sim":
 
         r = aktiv(
@@ -662,16 +702,19 @@ def order_status(order_id):
 
         return jsonify(r)
 
+    # FAZER
     r = fazer(
         "GET",
-        "/order/" + str(
-            o["provider_order_id"]
-        )
+        "/order/" +
+        str(o["provider_order_id"])
     )
 
     if r.get("ok"):
 
-        data = r.get("order") or {}
+        data = (
+            r.get("order")
+            or {}
+        )
 
         status = (
             data.get("status")
@@ -700,11 +743,14 @@ def order_status(order_id):
     return jsonify(r)
 
 
-# =========================
-# STARS
-# =========================
+# =========================================================
+# BUY STARS
+# =========================================================
 
-@app.route("/buy/stars", methods=["POST"])
+@app.route(
+    "/buy/stars",
+    methods=["POST"]
+)
 @user_required
 def buy_stars():
 
@@ -720,7 +766,7 @@ def buy_stars():
                 "0"
             )
         )
-    except:
+    except Exception:
         qty = 0
 
     if not target or qty <= 0:
@@ -744,7 +790,7 @@ def buy_stars():
         flash(
             q.get(
                 "error",
-                "Stars narxi olinmadi"
+                "Stars narxi olinmadi."
             ),
             "error"
         )
@@ -769,7 +815,7 @@ def buy_stars():
             )
         )
 
-    except:
+    except Exception:
 
         min_q = 50
         max_q = 10000
@@ -787,24 +833,24 @@ def buy_stars():
 
     try:
 
-        total_usd = (
-            Decimal(
-                str(
-                    q["price_per_star"]
-                )
-            ) * qty
+        price_per_star = Decimal(
+            str(q["price_per_star"])
         )
 
-    except:
+    except Exception:
 
         flash(
-            "API Stars narxini noto'g'ri qaytardi.",
+            "Stars narxi API'dan noto'g'ri keldi.",
             "error"
         )
 
         return redirect(
             url_for("home")
         )
+
+    total_usd = (
+        price_per_star * qty
+    )
 
     sell = price_usd_to_uzs(
         total_usd
@@ -823,17 +869,18 @@ def buy_stars():
             url_for("home")
         )
 
+    payload = {
+        "telegram_username": target,
+        "quantity": qty
+    }
+
     r = fazer(
         "POST",
         "/telegram/stars/buy",
-        json={
-            "telegram_username": target,
-            "quantity": qty
-        },
+        json=payload,
         headers={
-            "Idempotency-Key": str(
-                uuid.uuid4()
-            )
+            "Idempotency-Key":
+                str(uuid.uuid4())
         }
     )
 
@@ -842,7 +889,7 @@ def buy_stars():
         flash(
             r.get(
                 "error",
-                "Stars buyurtmasi xatosi"
+                "Stars buyurtmasi xatosi."
             ),
             "error"
         )
@@ -870,17 +917,33 @@ def buy_stars():
 
     c = db()
 
+    # Balansni kamaytirish
     c.execute(
         """
         UPDATE users
         SET balance=balance-?
         WHERE id=?
+        AND balance>=?
         """,
         (
             sell,
-            u["id"]
+            u["id"],
+            sell
         )
     )
+
+    if c.total_changes == 0:
+
+        c.close()
+
+        flash(
+            "Balans yetarli emas.",
+            "error"
+        )
+
+        return redirect(
+            url_for("home")
+        )
 
     add_tx(
         c,
@@ -940,11 +1003,14 @@ def buy_stars():
     )
 
 
-# =========================
-# PREMIUM
-# =========================
+# =========================================================
+# BUY PREMIUM
+# =========================================================
 
-@app.route("/buy/premium", methods=["POST"])
+@app.route(
+    "/buy/premium",
+    methods=["POST"]
+)
 @user_required
 def buy_premium():
 
@@ -954,16 +1020,23 @@ def buy_premium():
     ).strip()
 
     try:
+
         months = int(
             request.form.get(
                 "months",
                 "0"
             )
         )
-    except:
+
+    except Exception:
+
         months = 0
 
-    if not target or months not in (3, 6, 12):
+    if not target or months not in (
+        3,
+        6,
+        12
+    ):
 
         flash(
             "Username yoki Premium muddati noto'g'ri.",
@@ -984,7 +1057,7 @@ def buy_premium():
         flash(
             q.get(
                 "error",
-                "Premium narxi olinmadi"
+                "Premium narxi olinmadi."
             ),
             "error"
         )
@@ -999,24 +1072,21 @@ def buy_premium():
         or []
     )
 
-    try:
+    plan = None
 
-        plan = next(
-            (
-                p for p in plans
-                if int(
-                    p.get(
-                        "months",
-                        0
-                    )
-                ) == months
-            ),
-            None
-        )
+    for p in plans:
 
-    except:
+        try:
 
-        plan = None
+            if int(
+                p.get("months", 0)
+            ) == months:
+
+                plan = p
+                break
+
+        except Exception:
+            pass
 
     if not plan:
 
@@ -1032,15 +1102,13 @@ def buy_premium():
     try:
 
         total_usd = Decimal(
-            str(
-                plan["price_usd"]
-            )
+            str(plan["price_usd"])
         )
 
-    except:
+    except Exception:
 
         flash(
-            "Premium API narxini noto'g'ri qaytardi.",
+            "Premium narxi API'dan noto'g'ri keldi.",
             "error"
         )
 
@@ -1073,9 +1141,8 @@ def buy_premium():
             "months": months
         },
         headers={
-            "Idempotency-Key": str(
-                uuid.uuid4()
-            )
+            "Idempotency-Key":
+                str(uuid.uuid4())
         }
     )
 
@@ -1084,7 +1151,7 @@ def buy_premium():
         flash(
             r.get(
                 "error",
-                "Premium buyurtmasi xatosi"
+                "Premium buyurtmasi xatosi."
             ),
             "error"
         )
@@ -1117,12 +1184,27 @@ def buy_premium():
         UPDATE users
         SET balance=balance-?
         WHERE id=?
+        AND balance>=?
         """,
         (
             sell,
-            u["id"]
+            u["id"],
+            sell
         )
     )
+
+    if c.total_changes == 0:
+
+        c.close()
+
+        flash(
+            "Balans yetarli emas.",
+            "error"
+        )
+
+        return redirect(
+            url_for("home")
+        )
 
     add_tx(
         c,
@@ -1182,9 +1264,9 @@ def buy_premium():
     )
 
 
-# =========================
+# =========================================================
 # AKTIVSIM
-# =========================
+# =========================================================
 
 @app.route("/sim")
 @user_required
@@ -1199,9 +1281,6 @@ def sim():
         []
     )
 
-    if not isinstance(countries, list):
-        countries = []
-
     return render_template(
         "sim.html",
         countries=countries,
@@ -1209,7 +1288,10 @@ def sim():
     )
 
 
-@app.route("/sim/buy/<country>", methods=["POST"])
+@app.route(
+    "/sim/buy/<country>",
+    methods=["POST"]
+)
 @user_required
 def sim_buy(country):
 
@@ -1221,9 +1303,6 @@ def sim_buy(country):
         "result",
         []
     )
-
-    if not isinstance(cs, list):
-        cs = []
 
     item = next(
         (
@@ -1252,10 +1331,10 @@ def sim_buy(country):
             + int(MARKUP_UZS)
         )
 
-    except:
+    except Exception:
 
         flash(
-            "SIM narxini API noto'g'ri qaytardi.",
+            "SIM narxi noto'g'ri.",
             "error"
         )
 
@@ -1303,9 +1382,6 @@ def sim_buy(country):
         {}
     )
 
-    if not isinstance(x, dict):
-        x = {}
-
     c = db()
 
     c.execute(
@@ -1313,12 +1389,27 @@ def sim_buy(country):
         UPDATE users
         SET balance=balance-?
         WHERE id=?
+        AND balance>=?
         """,
         (
             sell,
-            u["id"]
+            u["id"],
+            sell
         )
     )
+
+    if c.total_changes == 0:
+
+        c.close()
+
+        flash(
+            "Balans yetarli emas.",
+            "error"
+        )
+
+        return redirect(
+            url_for("sim")
+        )
 
     add_tx(
         c,
@@ -1379,9 +1470,9 @@ def sim_buy(country):
     )
 
 
-# =========================
+# =========================================================
 # TOPUP
-# =========================
+# =========================================================
 
 @app.route("/topup")
 @user_required
@@ -1392,24 +1483,49 @@ def topup():
     )
 
 
-# =========================
-# ADMIN LOGIN
-# =========================
+# =========================================================
+# HELP
+# =========================================================
 
-@app.route("/admin/login", methods=["GET", "POST"])
+@app.route("/help")
+def help_page():
+
+    return render_template(
+        "help.html"
+    )
+
+
+# =========================================================
+# ADMIN LOGIN
+# =========================================================
+
+@app.route(
+    "/admin/login",
+    methods=["GET", "POST"]
+)
 def admin_login():
 
     if request.method == "POST":
 
+        username = request.form.get(
+            "username",
+            ""
+        )
+
+        password = request.form.get(
+            "password",
+            ""
+        )
+
         if (
-            request.form.get("username")
-            == ADMIN_USERNAME
-            and
-            request.form.get("password")
-            == ADMIN_PASSWORD
+            username == ADMIN_USERNAME
+            and password == ADMIN_PASSWORD
         ):
 
+            session.clear()
+
             session["admin"] = True
+            session.permanent = True
 
             return redirect(
                 url_for("admin")
@@ -1425,9 +1541,9 @@ def admin_login():
     )
 
 
-# =========================
+# =========================================================
 # ADMIN LOGOUT
-# =========================
+# =========================================================
 
 @app.route("/admin/logout")
 def admin_logout():
@@ -1442,9 +1558,9 @@ def admin_logout():
     )
 
 
-# =========================
+# =========================================================
 # ADMIN
-# =========================
+# =========================================================
 
 @app.route("/admin")
 @admin_required
@@ -1478,7 +1594,7 @@ def admin():
             0
         )
         FROM transactions
-        WHERE amount > 0
+        WHERE amount>0
         """
     ).fetchone()[0]
 
@@ -1486,14 +1602,20 @@ def admin():
         """
         SELECT COALESCE(
             SUM(
-                sell_uzs - api_usd * ?
+                sell_uzs
+                - api_usd * ?
             ),
             0
         )
         FROM orders
-        WHERE kind IN ('stars','premium')
+        WHERE kind IN (
+            'stars',
+            'premium'
+        )
         """,
-        (float(USD_UZS),)
+        (
+            float(USD_UZS),
+        )
     ).fetchone()[0]
 
     c.close()
@@ -1510,14 +1632,18 @@ def admin():
         sales=sales,
         deposits=deposits,
         profit=int(profit),
-        fazer_balance=fb.get("balance"),
-        fazer_error=fb.get("error")
+        fazer_balance=fb.get(
+            "balance"
+        ),
+        fazer_error=fb.get(
+            "error"
+        )
     )
 
 
-# =========================
+# =========================================================
 # ADMIN USERS
-# =========================
+# =========================================================
 
 @app.route("/admin/users")
 @admin_required
@@ -1541,9 +1667,9 @@ def admin_users():
     )
 
 
-# =========================
+# =========================================================
 # ADMIN BALANCE
-# =========================
+# =========================================================
 
 @app.route(
     "/admin/users/<int:uid>/balance",
@@ -1553,13 +1679,16 @@ def admin_users():
 def admin_balance(uid):
 
     try:
+
         amount = int(
             request.form.get(
                 "amount",
                 "0"
             )
         )
-    except:
+
+    except Exception:
+
         amount = 0
 
     c = db()
@@ -1573,7 +1702,10 @@ def admin_balance(uid):
 
         c.close()
 
-        return "User topilmadi", 404
+        return (
+            "User topilmadi",
+            404
+        )
 
     if u["balance"] + amount < 0:
 
@@ -1628,21 +1760,9 @@ def admin_balance(uid):
     )
 
 
-# =========================
-# HELP
-# =========================
-
-@app.route("/help")
-def help_page():
-
-    return render_template(
-        "help.html"
-    )
-
-
-# =========================
+# =========================================================
 # ROBOTS
-# =========================
+# =========================================================
 
 @app.route("/robots.txt")
 def robots():
@@ -1652,27 +1772,53 @@ def robots():
         "Allow: /\n"
         "Disallow: /admin\n"
         "Disallow: /profile\n"
-        "Disallow: /orders\n",
-        200,
-        {
-            "Content-Type": "text/plain"
-        }
+        "Disallow: /orders\n"
+    ), 200, {
+        "Content-Type":
+            "text/plain"
+    }
+
+
+# =========================================================
+# ERROR HANDLERS
+# =========================================================
+
+@app.errorhandler(404)
+def not_found(e):
+
+    return (
+        "Sahifa topilmadi",
+        404
     )
 
 
-# =========================
-# RUN
-# =========================
+@app.errorhandler(500)
+def internal_error(e):
+
+    return (
+        "Server xatosi. Iltimos keyinroq urinib ko'ring.",
+        500
+    )
+
+
+# =========================================================
+# START
+# =========================================================
 
 if __name__ == "__main__":
 
+    init_db()
+
+    print("=" * 40)
+    print("DONUZ SHOP ISHGA TUSHDI")
+    print("Database:", DB_PATH)
+    print("Port:", PORT)
+    print("Fazer API:", bool(FAZER_API_KEY))
+    print("AktivSIM API:", bool(AKTIV_API_KEY))
+    print("=" * 40)
+
     app.run(
         host="0.0.0.0",
-        port=int(
-            os.getenv(
-                "PORT",
-                "10000"
-            )
-        ),
+        port=PORT,
         debug=False
     )
