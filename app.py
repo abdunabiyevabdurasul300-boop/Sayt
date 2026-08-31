@@ -11,13 +11,13 @@ BASE_DIR=os.path.dirname(os.path.abspath(__file__))
 DB_PATH=os.path.join(BASE_DIR,"shop.db")
 FAZER_BASE="https://api.fzr.cards/api/v2"
 AKTIV_BASE="https://ws2524.wineclo.com/AktivSimBot/api/v2/"
-FAZER_API_KEY=os.getenv("FAZER_API_KEY","")
-AKTIV_API_KEY=os.getenv("AKTIVSIM_API_KEY","")
+FAZER_API_KEY=os.getenv("FAZER_API_KEY","fc_e2a3d96eda3c7f0bd6b4a139")
+AKTIV_API_KEY=os.getenv("AKTIVSIM_API_KEY","YTvijKX0w1FHVGTv19i54ahe")
 SECRET_KEY=os.getenv("SECRET_KEY","change-this-secret")
 ADMIN_USERNAME=os.getenv("ADMIN_USERNAME","admin")
 ADMIN_PASSWORD=os.getenv("ADMIN_PASSWORD","change-this-password")
-USD_UZS=Decimal(os.getenv("USD_UZS","12500"))
-MARKUP_UZS=Decimal(os.getenv("MARKUP_UZS","2000"))
+USD_UZS=Decimal(os.getenv("USD_UZS","11650"))
+MARKUP_UZS=Decimal(os.getenv("MARKUP_UZS","4000"))
 
 app=Flask(__name__)
 app.secret_key=SECRET_KEY
