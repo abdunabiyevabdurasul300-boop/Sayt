@@ -44,15 +44,15 @@ ADMIN_USERNAME = os.getenv(
 
 ADMIN_PASSWORD = os.getenv(
     "ADMIN_PASSWORD",
-    "change-this-password"
+    "Donuz2bot"
 )
 
 USD_UZS = Decimal(
-    os.getenv("USD_UZS", "12500")
+    os.getenv("USD_UZS", "11500")
 )
 
 MARKUP_UZS = Decimal(
-    os.getenv("MARKUP_UZS", "2000")
+    os.getenv("MARKUP_UZS", "4000")
 )
 
 PORT = int(
