@@ -1,1 +1,131 @@
-{% extends "base.html" %}{% block title %}Donuz — Telegram Stars Premium{% endblock %}{% block content %}<div class="hero"><h1>⭐ Stars + 👑 Premium</h1><p>FazerCards API orqali buyurtma.</p>{% if me %}<div>💰 Balans: <b>{{"{:,}".format(me.balance)}} so'm</b></div>{% endif %}</div><div class="grid"><section class="card"><h2>⭐ Telegram Stars</h2>{% if stars.ok %}<p>1 ⭐ = ${{stars.price_per_star}} · Limit {{stars.min_amount}}–{{stars.max_amount}}</p><form method="post" action="/buy/stars"><input name="telegram_username" placeholder="@username" required><input name="quantity" type="number" min="{{stars.min_amount}}" max="{{stars.max_amount}}" value="100" required><button>⭐ Sotib olish</button></form>{% else %}<div class="alert error">{{stars.error}}</div>{% endif %}</section><section class="card"><h2>👑 Telegram Premium</h2>{% if premium.ok %}{% for p in premium.plans %}<form method="post" action="/buy/premium"><input type="hidden" name="months" value="{{p.months}}"><input name="telegram_username" placeholder="@username" required><button>{{p.months}} oy — ${{p.price_usd}} + {{markup}} so'm</button></form>{% endfor %}{% else %}<div class="alert error">{{premium.error}}</div>{% endif %}</section></div>{% endblock %}
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Donuz — Stars, Premium va AktivSIM</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+
+<div class="container">
+
+    <header>
+        <h1>⭐ Donuz</h1>
+        <p>Telegram Stars • Premium • AktivSIM</p>
+    </header>
+
+    <!-- Xabarlar -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            {% for category, message in messages %}
+                <div class="message {{ category }}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
+    {% endwith %}
+
+
+    <!-- LOGIN / REGISTER -->
+    {% if not me %}
+
+        <div class="auth-buttons">
+
+            <a href="{{ url_for('login') }}">
+                🔐 Kirish
+            </a>
+
+            <a href="{{ url_for('register') }}">
+                ➕ Akkaunt yaratish
+            </a>
+
+        </div>
+
+    {% else %}
+
+        <!-- USER -->
+        <div class="user-box">
+
+            <h3>👤 {{ me["username"] }}</h3>
+
+            <p>
+                💰 Balans:
+                <b>{{ "{:,}".format(me["balance"]) }} so'm</b>
+            </p>
+
+            <div class="menu">
+
+                <a href="{{ url_for('profile') }}">
+                    👤 Profil
+                </a>
+
+                <a href="{{ url_for('orders') }}">
+                    📋 Buyurtmalar
+                </a>
+
+                <a href="{{ url_for('topup') }}">
+                    💳 Balans to‘ldirish
+                </a>
+
+                <a href="{{ url_for('logout') }}">
+                    🚪 Chiqish
+                </a>
+
+            </div>
+
+        </div>
+
+    {% endif %}
+
+
+    <!-- STARS -->
+    <section>
+
+        <h2>⭐ Telegram Stars</h2>
+
+        {% if me %}
+
+        <form action="{{ url_for('buy_stars') }}" method="POST">
+
+            <label>Telegram username</label>
+
+            <input
+                type="text"
+                name="telegram_username"
+                placeholder="@username"
+                required
+            >
+
+            <label>Stars miqdori</label>
+
+            <input
+                type="number"
+                name="quantity"
+                min="50"
+                max="10000"
+                placeholder="Masalan: 100"
+                required
+            >
+
+            {% if stars and stars.get("ok") %}
+
+                <p>
+                    ⭐ 1 Star:
+                    {{ stars.get("price_per_star") }} USD
+                </p>
+
+            {% endif %}
+
+            <button type="submit">
+                ⭐ Stars sotib olish
+            </button>
+
+        </form>
+
+        {% else %}
+
+            <p>⭐ Stars sotib olish uchun av
