@@ -1,31 +1,152 @@
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Arial,sans-serif;background:#080b16;color:#fff;min-height:100vh}
-header{background:#11172b;padding:16px 4%;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:5}
-header h1{font-size:23px}
-button{border:0;border-radius:10px;padding:12px 17px;background:#704cff;color:#fff;font-weight:700;cursor:pointer}
-button:active{transform:scale(.98)}
-.top-btn{padding:10px 14px}
-.container{width:92%;max-width:1100px;margin:auto}
-.hero{margin-top:25px;padding:35px 20px;text-align:center;background:linear-gradient(135deg,#171d3b,#24104a);border-radius:20px}
-.hero h2{font-size:34px;margin-bottom:12px}.hero p{color:#b9c1d5;line-height:1.5}
-.title{text-align:center;margin:30px 0 20px}
-.games{display:grid;grid-template-columns:repeat(2,1fr);gap:15px}
-.game-card{background:#141b31;border:1px solid #293353;border-radius:16px;padding:20px;text-align:center}
-.game-icon{font-size:45px}.game-card h3{margin:10px 0}.game-card p{color:#aab3c9;margin-bottom:15px}
-.packages{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:18px}
-.package{background:#151d35;border:1px solid #303b63;border-radius:15px;padding:15px;text-align:center}
-.package h3{font-size:18px;margin-bottom:8px}.package .price{color:#00e676;font-size:16px;font-weight:bold;margin-bottom:12px}
-.package button{width:100%;background:#00a86b}
-.account{margin:18px auto 0;padding:12px;border-radius:12px;background:#10162a;max-width:420px}
-.notice{margin:20px auto;padding:14px;border-radius:12px;max-width:700px;background:#18213a;text-align:center}
-.loading{text-align:center;padding:30px;color:#aab3c9;grid-column:1/-1}
-.hidden{display:none!important}
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:18px;z-index:20}
-.modal-box{position:relative;background:#121a30;border:1px solid #303b63;border-radius:18px;padding:25px;width:min(460px,100%)}
-.modal-box h2{margin-bottom:10px}.modal-box p{color:#aab3c9;margin-bottom:15px;line-height:1.5}
-.modal-box input{width:100%;padding:13px;margin:7px 0;border-radius:10px;border:1px solid #39476d;background:#0b1020;color:#fff;outline:none}
-.modal-box button:not(.close){width:100%;margin-top:8px}
-.close{position:absolute;right:12px;top:10px;background:transparent;font-size:18px;padding:5px}
-.small{font-size:13px}.check-result{margin:10px 0;padding:10px;border-radius:10px;background:#0c1222;min-height:42px}
-footer{text-align:center;padding:30px 10px;margin-top:40px;color:#727b91}
-@media(max-width:650px){.games,.packages{grid-template-columns:1fr}.hero h2{font-size:28px}header h1{font-size:19px}}
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #0f1117;
+    color: #fff;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    background: #181b24;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.logo {
+    font-size: 22px;
+    font-weight: bold;
+}
+
+.balance {
+    background: #252a36;
+    padding: 10px 14px;
+    border-radius: 10px;
+}
+
+.container {
+    max-width: 900px;
+    margin: auto;
+    padding: 20px;
+}
+
+.hero {
+    text-align: center;
+    padding: 35px 15px;
+}
+
+.hero h1 {
+    font-size: 32px;
+    margin-bottom: 10px;
+}
+
+.card {
+    background: #181b24;
+    border-radius: 16px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 5px 20px rgba(0,0,0,.2);
+}
+
+input,
+select {
+    width: 100%;
+    padding: 13px;
+    margin: 7px 0;
+    border: 1px solid #333846;
+    border-radius: 10px;
+    background: #101219;
+    color: white;
+    outline: none;
+}
+
+button {
+    width: 100%;
+    padding: 13px;
+    margin-top: 8px;
+    border: 0;
+    border-radius: 10px;
+    background: #2f80ed;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+button:hover {
+    opacity: .9;
+}
+
+.product {
+    background: #222631;
+    padding: 15px;
+    border-radius: 12px;
+    margin-top: 10px;
+}
+
+.product-title {
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.product-price {
+    margin-top: 6px;
+    color: #69a7ff;
+}
+
+.product button {
+    margin-top: 12px;
+}
+
+.success {
+    background: #153b25;
+    padding: 12px;
+    border-radius: 10px;
+    margin-top: 10px;
+}
+
+.error {
+    background: #451b1b;
+    padding: 12px;
+    border-radius: 10px;
+    margin-top: 10px;
+}
+
+.info {
+    background: #172c45;
+    padding: 12px;
+    border-radius: 10px;
+    margin-top: 10px;
+}
+
+#toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #222;
+    padding: 12px 18px;
+    border-radius: 10px;
+    display: none;
+    z-index: 100;
+}
+
+@media (max-width: 600px) {
+    .container {
+        padding: 12px;
+    }
+
+    .hero h1 {
+        font-size: 25px;
+    }
+
+    .header {
+        padding: 12px;
+    }
+}
