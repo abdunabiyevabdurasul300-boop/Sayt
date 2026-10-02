@@ -8,9 +8,7 @@ import threading
 import contextvars
 import hashlib
 import base64
-import mimetypes
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
 
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -25,20 +23,32 @@ from datetime import datetime, timedelta
 
 import requests
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
-
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+# Telegram kutubxonasi web-only rejimda majburiy emas.
+# Bot funksiyalari saqlanadi, lekin bu fayl ishga tushganda polling qilinmaydi.
+try:
+    from telegram import (
+        Update,
+        InlineKeyboardButton,
+        InlineKeyboardMarkup,
+    )
+    from telegram.ext import (
+        Application,
+        CommandHandler,
+        CallbackQueryHandler,
+        MessageHandler,
+        ContextTypes,
+        filters,
+    )
+except ImportError:
+    Update = object
+    InlineKeyboardButton = object
+    InlineKeyboardMarkup = object
+    Application = None
+    CommandHandler = None
+    CallbackQueryHandler = None
+    MessageHandler = None
+    ContextTypes = object
+    filters = object
 
 
 # ============================================================
@@ -550,652 +560,333 @@ def web_create_order(payload, user_id):
 
 class WebAPIHandler(BaseHTTPRequestHandler):
 
-    server_version = "GAME-DONAT-WEB/1.0"
-
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header(
-            "Access-Control-Allow-Methods",
-            "GET, POST, OPTIONS"
-        )
-        self.send_header(
-            "Access-Control-Allow-Headers",
-            "Content-Type, Authorization, X-Auth-Token"
-        )
-        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
-    def _reply(
-        self,
-        status=200,
-        data=None,
-        content_type="application/json; charset=utf-8"
-    ):
-        if data is None:
-            body = b""
-        elif isinstance(data, bytes):
-            body = data
-        elif isinstance(data, str):
-            body = data.encode("utf-8")
-        else:
-            body = json.dumps(
-                data,
-                ensure_ascii=False
-            ).encode("utf-8")
-
+    def _reply(self, data, status=200):
+        raw = _json_bytes(data)
         self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
         self._cors()
-        self.send_header("Content-Type", content_type)
-        self.send_header(
-            "Content-Length",
-            str(len(body))
-        )
-        self.send_header(
-            "Cache-Control",
-            "no-store"
-        )
         self.end_headers()
-
-        if body:
-            self.wfile.write(body)
-
-    def _json(self, status, data):
-        self._reply(
-            status,
-            data,
-            "application/json; charset=utf-8"
-        )
+        self.wfile.write(raw)
 
     def _body(self):
         try:
-            length = int(
-                self.headers.get(
-                    "Content-Length",
-                    "0"
-                )
-            )
-        except Exception:
-            length = 0
-
-        if length <= 0:
-            return {}
-
-        raw = self.rfile.read(length)
-
-        try:
-            return json.loads(
-                raw.decode("utf-8")
-            )
+            n = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(n) if n else b"{}"
+            return json.loads(raw.decode("utf-8"))
         except Exception:
             return {}
 
     def _auth_token(self):
-        token = self.headers.get(
-            "X-Auth-Token"
-        )
-
-        if token:
-            return token.strip()
-
-        auth = self.headers.get(
-            "Authorization",
-            ""
-        )
-
-        if auth.startswith("Bearer "):
-            return auth[7:].strip()
-
-        parsed = urlparse(self.path)
-        qs = parse_qs(parsed.query)
-
-        values = qs.get("token")
-
-        if values:
-            return values[0].strip()
-
+        h = self.headers.get("Authorization", "")
+        if h.lower().startswith("bearer "):
+            return h[7:].strip()
         return ""
-
-    def _serve_file(
-        self,
-        path,
-        content_type=None
-    ):
-        try:
-            if not os.path.isfile(path):
-                self._json(
-                    404,
-                    {
-                        "ok": False,
-                        "error": "File not found"
-                    }
-                )
-                return
-
-            with open(path, "rb") as f:
-                data = f.read()
-
-            if content_type is None:
-                content_type = (
-                    mimetypes.guess_type(path)[0]
-                    or "application/octet-stream"
-                )
-
-            if (
-                content_type.startswith("text/")
-                and "charset=" not in content_type
-            ):
-                content_type += "; charset=utf-8"
-
-            self._reply(
-                200,
-                data,
-                content_type
-            )
-
-        except Exception:
-            log.exception(
-                "WEB FILE ERROR"
-            )
-
-            self._json(
-                500,
-                {
-                    "ok": False,
-                    "error": "File read error"
-                }
-            )
 
     def do_OPTIONS(self):
         self.send_response(204)
         self._cors()
-        self.send_header(
-            "Content-Length",
-            "0"
-        )
         self.end_headers()
 
-    # ========================================================
-    # GET
-    # ========================================================
+
+    def do_POST(self):
+        """Web-only API endpoints. Telegram polling is not started in web-only mode."""
+        from urllib.parse import urlparse
+
+        path = urlparse(self.path).path
+        payload = self._body()
+
+        try:
+            # Authentication endpoints. These use the existing Telegram
+            # message sender only when BOT_TOKEN is configured; no polling
+            # process is started.
+            if path in ("/api/auth/request", "/api/auth/code", "/api/login/request"):
+                try:
+                    user_id = int(payload.get("user_id", 0))
+                except Exception:
+                    user_id = 0
+                if not user_id:
+                    return self._reply({"ok": False, "error": "user_id kiritilmagan."}, 400)
+                ok, message = web_request_auth_code(user_id)
+                return self._reply({"ok": ok, "message": message}, 200 if ok else 400)
+
+            if path in ("/api/auth/verify", "/api/login/verify"):
+                try:
+                    user_id = int(payload.get("user_id", 0))
+                except Exception:
+                    user_id = 0
+                code = str(payload.get("code", "")).strip()
+                if not user_id or not code:
+                    return self._reply({"ok": False, "error": "user_id va code kerak."}, 400)
+                token = web_verify_auth_code(user_id, code)
+                if not token:
+                    return self._reply({"ok": False, "error": "Kod noto'g'ri yoki muddati tugagan."}, 401)
+                return self._reply({"ok": True, "token": token}, 200)
+
+            if path in ("/api/check-id", "/api/check_id"):
+                return self._reply(web_check_id(payload), 200)
+
+            if path in ("/api/order", "/api/orders/create"):
+                uid = web_session_user(self._auth_token())
+                if not uid:
+                    return self._reply({"ok": False, "error": "Kirish talab qilinadi."}, 401)
+                return self._reply(web_create_order(payload, uid), 200)
+
+            return self._reply({"ok": False, "error": "Endpoint topilmadi."}, 404)
+
+        except Exception as e:
+            log.exception("[WEB] POST API xatosi")
+            return self._reply({"ok": False, "error": str(e)}, 500)
+
+    def _serve_file(self, file_path):
+        """Serve a frontend file from the same directory as bot.py."""
+        try:
+            base_dir = Path(__file__).resolve().parent
+            requested = (base_dir / file_path).resolve()
+
+            # Prevent path traversal outside the project directory.
+            requested.relative_to(base_dir)
+
+            if not requested.is_file():
+                return self._reply({
+                    "ok": False,
+                    "error": "Fayl topilmadi."
+                }, 404)
+
+            data = requested.read_bytes()
+            import mimetypes
+            content_type = mimetypes.guess_type(str(requested))[0] or "application/octet-stream"
+
+            self.send_response(200)
+            self.send_header("Content-Type", f"{content_type}; charset=utf-8" if content_type.startswith(("text/", "application/javascript")) else content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self._cors()
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        except ValueError:
+            return self._reply({
+                "ok": False,
+                "error": "Noto'g'ri fayl yo'li."
+            }, 403)
+        except Exception:
+            log.exception("Frontend faylini yuborishda xato")
+            return self._reply({
+                "ok": False,
+                "error": "Faylni yuklashda server xatosi."
+            }, 500)
 
     def do_GET(self):
+        from urllib.parse import urlparse
+        from pathlib import Path
+
+        path = urlparse(self.path).path
+
         try:
-            parsed = urlparse(self.path)
-            path = parsed.path
 
             # =========================
             # ASOSIY SAYT
             # =========================
             if path == "/":
-                file_path = os.path.join(
-                    os.path.dirname(
-                        os.path.abspath(__file__)
-                    ),
-                    "templates",
-                    "index.html"
-                )
 
-                if os.path.isfile(file_path):
-                    self._serve_file(
-                        file_path,
-                        "text/html; charset=utf-8"
-                    )
-                    return
+                possible_files = [
+                    Path("index.html"),
+                    Path("templates/index.html"),
+                ]
 
-                self._json(
-                    404,
-                    {
+                html_path = None
+
+                for file_path in possible_files:
+                    if file_path.exists():
+                        html_path = file_path
+                        break
+
+                if html_path is None:
+                    return self._reply({
                         "ok": False,
-                        "error": "templates/index.html not found",
-                        "file": file_path
-                    }
+                        "error": "index.html topilmadi."
+                    }, 404)
+
+                raw = html_path.read_bytes()
+
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    "text/html; charset=utf-8"
                 )
+                self.send_header(
+                    "Content-Length",
+                    str(len(raw))
+                )
+                self._cors()
+                self.end_headers()
+                self.wfile.write(raw)
                 return
 
             # =========================
-            # CSS
+            # ROOT CSS / JS
             # =========================
-            if path == "/style.css":
-                file_path = os.path.join(
-                    os.path.dirname(
-                        os.path.abspath(__file__)
-                    ),
-                    "static",
-                    "style.css"
-                )
+            if path in (
+                "/style.css",
+                "/script.js"
+            ):
 
-                if os.path.isfile(file_path):
-                    self._serve_file(
-                        file_path,
-                        "text/css; charset=utf-8"
-                    )
-                    return
+                filename = path.lstrip("/")
+                file_path = Path(filename)
 
-                self._json(
-                    404,
-                    {
+                if not file_path.exists():
+
+                    file_path = Path("static") / filename
+
+                if not file_path.exists():
+
+                    return self._reply({
                         "ok": False,
-                        "error": "static/style.css not found"
-                    }
+                        "error": f"{filename} topilmadi."
+                    }, 404)
+
+                raw = file_path.read_bytes()
+
+                if filename.endswith(".css"):
+                    content_type = "text/css; charset=utf-8"
+                else:
+                    content_type = "application/javascript; charset=utf-8"
+
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    content_type
                 )
+                self.send_header(
+                    "Content-Length",
+                    str(len(raw))
+                )
+                self._cors()
+                self.end_headers()
+                self.wfile.write(raw)
                 return
 
             # =========================
-            # JAVASCRIPT
-            # =========================
-            if path == "/script.js":
-                file_path = os.path.join(
-                    os.path.dirname(
-                        os.path.abspath(__file__)
-                    ),
-                    "static",
-                    "script.js"
-                )
-
-                if os.path.isfile(file_path):
-                    self._serve_file(
-                        file_path,
-                        "application/javascript; charset=utf-8"
-                    )
-                    return
-
-                self._json(
-                    404,
-                    {
-                        "ok": False,
-                        "error": "static/script.js not found"
-                    }
-                )
-                return
-
-            # =========================
-            # STATIC FILES
+            # STATIC FOLDER
             # =========================
             if path.startswith("/static/"):
-                base_dir = os.path.dirname(
-                    os.path.abspath(__file__)
-                )
 
-                relative = path[len("/static/"):]
-                relative = os.path.normpath(relative)
+                file_path = Path(path.lstrip("/"))
 
-                if (
-                    relative.startswith("..")
-                    or os.path.isabs(relative)
-                ):
-                    self._json(
-                        403,
-                        {
-                            "ok": False,
-                            "error": "Forbidden"
-                        }
-                    )
-                    return
+                if not file_path.exists():
 
-                file_path = os.path.join(
-                    base_dir,
-                    "static",
-                    relative
-                )
-
-                if os.path.isfile(file_path):
-                    self._serve_file(file_path)
-                    return
-
-                self._json(
-                    404,
-                    {
+                    return self._reply({
                         "ok": False,
-                        "error": "Static file not found"
-                    }
+                        "error": "Static fayl topilmadi."
+                    }, 404)
+
+                raw = file_path.read_bytes()
+
+                if path.endswith(".css"):
+                    content_type = "text/css; charset=utf-8"
+                elif path.endswith(".js"):
+                    content_type = "application/javascript; charset=utf-8"
+                elif path.endswith(".png"):
+                    content_type = "image/png"
+                elif path.endswith(".jpg") or path.endswith(".jpeg"):
+                    content_type = "image/jpeg"
+                elif path.endswith(".svg"):
+                    content_type = "image/svg+xml"
+                else:
+                    content_type = "application/octet-stream"
+
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    content_type
                 )
+                self.send_header(
+                    "Content-Length",
+                    str(len(raw))
+                )
+                self._cors()
+                self.end_headers()
+                self.wfile.write(raw)
                 return
 
             # =========================
             # HEALTH
             # =========================
             if path == "/health":
-                self._json(
-                    200,
-                    {
-                        "ok": True,
-                        "status": "online",
-                        "service": "GAME DONAT"
-                    }
-                )
-                return
+
+                return self._reply({
+                    "ok": True,
+                    "service": "GAME DONAT",
+                    "status": "online"
+                })
 
             # =========================
-            # CATALOG
+            # CATALOG API
             # =========================
             if path == "/api/catalog":
-                try:
-                    result = web_catalog()
 
-                    if result is None:
-                        result = {
-                            "ok": True,
-                            "games": []
-                        }
-
-                    self._json(
-                        200,
-                        result
-                    )
-
-                except Exception:
-                    log.exception(
-                        "WEB CATALOG ERROR"
-                    )
-
-                    self._json(
-                        500,
-                        {
-                            "ok": False,
-                            "error": "Catalog error"
-                        }
-                    )
-
-                return
+                return self._reply({
+                    "ok": True,
+                    "games": web_catalog()
+                })
 
             # =========================
-            # ME
+            # USER API
             # =========================
             if path == "/api/me":
-                token = self._auth_token()
 
-                if not token:
-                    self._json(
-                        401,
-                        {
-                            "ok": False,
-                            "error": "Authorization required"
-                        }
+                uid = web_session_user(
+                    self._auth_token()
+                )
+
+                if not uid:
+
+                    return self._reply({
+                        "ok": False,
+                        "error": "Kirish talab qilinadi."
+                    }, 401)
+
+                return self._reply({
+                    "ok": True,
+                    "user_id": uid,
+                    "balance": float(
+                        get_balance(uid)
                     )
-                    return
-
-                try:
-                    user_id = web_session_user(
-                        token
-                    )
-
-                    if not user_id:
-                        self._json(
-                            401,
-                            {
-                                "ok": False,
-                                "error": "Session expired"
-                            }
-                        )
-                        return
-
-                    self._json(
-                        200,
-                        {
-                            "ok": True,
-                            "user_id": user_id
-                        }
-                    )
-
-                except Exception:
-                    log.exception(
-                        "WEB ME ERROR"
-                    )
-
-                    self._json(
-                        500,
-                        {
-                            "ok": False,
-                            "error": "User error"
-                        }
-                    )
-
-                return
+                })
 
             # =========================
             # NOT FOUND
             # =========================
-            self._json(
-                404,
-                {
-                    "ok": False,
-                    "error": "Not found",
-                    "path": path
-                }
-            )
+            return self._reply({
+                "ok": False,
+                "error": "Endpoint topilmadi."
+            }, 404)
 
-        except Exception:
+        except Exception as e:
+
             log.exception(
-                "WEB GET ERROR"
+                "Web GET API xatosi"
             )
 
-            try:
-                self._json(
-                    500,
-                    {
-                        "ok": False,
-                        "error": "Internal server error"
-                    }
-                )
-            except Exception:
-                pass
+            return self._reply({
+                "ok": False,
+                "error": str(e)
+            }, 500)
 
-    # ========================================================
-    # POST
-    # ========================================================
-
-    def do_POST(self):
-
-        try:
-            parsed = urlparse(self.path)
-            path = parsed.path
-
-            payload = self._body()
-
-            # ==============================
-            # REQUEST AUTH CODE
-            # ==============================
-
-            if path in (
-                "/api/auth/request",
-                "/api/request-auth",
-                "/api/auth-code"
-            ):
-
-                user_id = payload.get(
-                    "user_id"
-                )
-
-                if not user_id:
-                    self._json(
-                        400,
-                        {
-                            "ok": False,
-                            "error": "user_id required"
-                        }
-                    )
-                    return
-
-                result = web_request_auth_code(
-                    user_id
-                )
-
-                if result is None:
-                    result = {
-                        "ok": True
-                    }
-
-                self._json(
-                    200,
-                    result
-                )
-                return
-
-            # ==============================
-            # VERIFY AUTH CODE
-            # ==============================
-
-            if path in (
-                "/api/auth/verify",
-                "/api/verify-auth",
-                "/api/login"
-            ):
-
-                user_id = payload.get(
-                    "user_id"
-                )
-
-                code = payload.get(
-                    "code"
-                )
-
-                if not user_id or not code:
-                    self._json(
-                        400,
-                        {
-                            "ok": False,
-                            "error": "user_id and code required"
-                        }
-                    )
-                    return
-
-                result = web_verify_auth_code(
-                    user_id,
-                    str(code)
-                )
-
-                if result is None:
-                    result = {
-                        "ok": False,
-                        "error": "Invalid code"
-                    }
-
-                self._json(
-                    200,
-                    result
-                )
-                return
-
-            # ==============================
-            # CHECK GAME ID
-            # ==============================
-
-            if path in (
-                "/api/check-id",
-                "/api/check_id",
-                "/api/check"
-            ):
-
-                result = web_check_id(
-                    payload
-                )
-
-                if result is None:
-                    result = {
-                        "ok": False,
-                        "error": "Check failed"
-                    }
-
-                self._json(
-                    200,
-                    result
-                )
-                return
-
-            # ==============================
-            # CREATE ORDER
-            # ==============================
-
-            if path in (
-                "/api/order",
-                "/api/orders",
-                "/api/create-order",
-                "/api/create_order"
-            ):
-
-                token = self._auth_token()
-
-                if not token:
-                    self._json(
-                        401,
-                        {
-                            "ok": False,
-                            "error": "Authorization required"
-                        }
-                    )
-                    return
-
-                user_id = web_session_user(
-                    token
-                )
-
-                if not user_id:
-                    self._json(
-                        401,
-                        {
-                            "ok": False,
-                            "error": "Session expired"
-                        }
-                    )
-                    return
-
-                result = web_create_order(
-                    payload,
-                    user_id
-                )
-
-                if result is None:
-                    result = {
-                        "ok": False,
-                        "error": "Order failed"
-                    }
-
-                self._json(
-                    200,
-                    result
-                )
-                return
-
-            # ==============================
-            # POST NOT FOUND
-            # ==============================
-
-            self._json(
-                404,
-                {
-                    "ok": False,
-                    "error": "POST endpoint not found",
-                    "path": path
-                }
-            )
-
-        except Exception:
-            log.exception(
-                "WEB POST ERROR"
-            )
-
-            try:
-                self._json(
-                    500,
-                    {
-                        "ok": False,
-                        "error": "Internal server error"
-                    }
-                )
-            except Exception:
-                pass
-
-    def log_message(self, format, *args):
-        print(
-            "[WEB]",
-            format % args
-        )
 
 
 # ============================================================
 # RENDER HEALTH SERVER
 # ============================================================
+
 class HealthHandler(WebAPIHandler):
-        pass
+    pass
 
 
 def start_health_server():
@@ -7459,124 +7150,30 @@ async def error_handler(
 # ============================================================
 
 def main():
-
-    # --------------------------------------------------------
-    # RENDER PORT SERVER
-    # --------------------------------------------------------
-
-    health_thread = threading.Thread(
-        target=start_health_server,
-        daemon=True
-    )
-
-    health_thread.start()
-
-    # --------------------------------------------------------
-    # DATABASE
-    # --------------------------------------------------------
-
+    """
+    Render Web Service uchun WEB-ONLY rejim.
+    Telegram polling, child botlar va bot job queue ishga tushirilmaydi.
+    Sayt 0.0.0.0:$PORT da asosiy process sifatida ishlaydi.
+    """
     CURRENT_DB.set(MAIN_DB)
+
+    # Database is needed by the web API/catalog.
     init_db()
     ensure_external_schema()
 
+    # Keep the built-in game records available without starting the bot.
     ensure_pubg()
     ensure_mobile_legends()
 
-    # --------------------------------------------------------
-    # ENV TEKSHIRISH
-    # --------------------------------------------------------
-
-    if not BOT_TOKEN:
-
-        raise SystemExit(
-            "❌ BOT_TOKEN Environment Variable yozilmagan."
-        )
-
-    if not ADMIN_ID:
-
-        raise SystemExit(
-            "❌ ADMIN_ID Environment Variable yozilmagan."
-        )
-
     if not PLAYPAY_API_KEY:
+        log.warning("[WEB] PLAYPAY_API_KEY o'rnatilmagan. Sayt ochiladi, lekin PlayPay buyurtmalari ishlamaydi.")
 
-        raise SystemExit(
-            "❌ PLAYPAY_API_KEY Environment Variable yozilmagan."
-        )
+    log.info("[WEB] GAME DONAT web server ishga tushmoqda")
+    log.info("[WEB] 0.0.0.0:%s", PORT)
+    log.info("[WEB] Telegram bot polling: OFF")
+    log.info("[WEB] Child bots: OFF")
 
-    if Fernet is None:
-        raise SystemExit("❌ cryptography o'rnatilmagan. requirements.txt ga cryptography qo'shing.")
-
-    # --------------------------------------------------------
-    # TELEGRAM APP
-    # --------------------------------------------------------
-
-    global MAIN_BOT_ID, MAIN_BOT_USERNAME
-    app = build_application(BOT_TOKEN, child=False)
-    # Main bot identity
-    async def _register_main():
-        global MAIN_BOT_ID, MAIN_BOT_USERNAME
-        me = await app.bot.get_me()
-        MAIN_BOT_ID = me.id
-        MAIN_BOT_USERNAME = me.username or ""
-    # run_polling will initialize later, so fetch identity through a short temp request
-    import requests as _requests
-    rr = _requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getMe", timeout=20)
-    if not rr.ok or not rr.json().get("ok"):
-        raise SystemExit("❌ BOT_TOKEN ishlamaydi.")
-    me = rr.json()["result"]
-    MAIN_BOT_ID = int(me["id"])
-    MAIN_BOT_USERNAME = me.get("username", "")
-
-    # Existing child bots are started by the job queue after polling starts.
-
-    # --------------------------------------------------------
-    # LOG
-    # --------------------------------------------------------
-
-    print(
-        "=============================="
-    )
-
-    print(
-        "       PLAYPAY DONAT BOT"
-    )
-
-    print(
-        "       BOT ISHLAYAPTI"
-    )
-
-    print(
-        f"       HTTP PORT: {PORT}"
-    )
-
-    print(
-        "       PUBG GAME ID: 141"
-    )
-
-    print(
-        "       MOBILE LEGENDS ID: 54"
-    )
-
-    print(
-        "       MARKUP: 0% | WEB API: ON"
-    )
-
-    print(
-        "       CATALOG AUTO SYNC: OFF"
-    )
-
-    print(
-        "=============================="
-    )
-
-    # --------------------------------------------------------
-    # TELEGRAM POLLING
-    # --------------------------------------------------------
-
-    app.run_polling(
-        drop_pending_updates=True
-    )
+    start_health_server()
 
 
 # ============================================================
