@@ -548,282 +548,671 @@ def web_create_order(payload, user_id):
 
 class WebAPIHandler(BaseHTTPRequestHandler):
 
+    server_version = "GAME-DONAT-WEB/1.0"
+
     def _cors(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header(
+            "Access-Control-Allow-Methods",
+            "GET, POST, OPTIONS"
+        )
+        self.send_header(
+            "Access-Control-Allow-Headers",
+            "Content-Type, Authorization, X-Auth-Token"
+        )
+        self.send_header("Access-Control-Max-Age", "86400")
 
-    def _reply(self, data, status=200):
-        raw = _json_bytes(data)
+    def _reply(
+        self,
+        status=200,
+        data=None,
+        content_type="application/json; charset=utf-8"
+    ):
+        if data is None:
+            body = b""
+        elif isinstance(data, bytes):
+            body = data
+        elif isinstance(data, str):
+            body = data.encode("utf-8")
+        else:
+            body = json.dumps(
+                data,
+                ensure_ascii=False
+            ).encode("utf-8")
+
         self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(raw)))
         self._cors()
+        self.send_header("Content-Type", content_type)
+        self.send_header(
+            "Content-Length",
+            str(len(body))
+        )
+        self.send_header(
+            "Cache-Control",
+            "no-store"
+        )
         self.end_headers()
-        self.wfile.write(raw)
+
+        if body:
+            self.wfile.write(body)
+
+    def _json(self, status, data):
+        self._reply(
+            status,
+            data,
+            "application/json; charset=utf-8"
+        )
 
     def _body(self):
         try:
-            n = int(self.headers.get("Content-Length", "0"))
-            raw = self.rfile.read(n) if n else b"{}"
-            return json.loads(raw.decode("utf-8"))
+            length = int(
+                self.headers.get(
+                    "Content-Length",
+                    "0"
+                )
+            )
+        except Exception:
+            length = 0
+
+        if length <= 0:
+            return {}
+
+        raw = self.rfile.read(length)
+
+        try:
+            return json.loads(
+                raw.decode("utf-8")
+            )
         except Exception:
             return {}
 
     def _auth_token(self):
-        h = self.headers.get("Authorization", "")
-        if h.lower().startswith("bearer "):
-            return h[7:].strip()
+        token = self.headers.get(
+            "X-Auth-Token"
+        )
+
+        if token:
+            return token.strip()
+
+        auth = self.headers.get(
+            "Authorization",
+            ""
+        )
+
+        if auth.startswith("Bearer "):
+            return auth[7:].strip()
+
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+
+        values = qs.get("token")
+
+        if values:
+            return values[0].strip()
+
         return ""
+
+    def _serve_file(
+        self,
+        path,
+        content_type=None
+    ):
+        try:
+            if not os.path.isfile(path):
+                self._json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": "File not found"
+                    }
+                )
+                return
+
+            with open(path, "rb") as f:
+                data = f.read()
+
+            if content_type is None:
+                content_type = (
+                    mimetypes.guess_type(path)[0]
+                    or "application/octet-stream"
+                )
+
+            if (
+                content_type.startswith("text/")
+                and "charset=" not in content_type
+            ):
+                content_type += "; charset=utf-8"
+
+            self._reply(
+                200,
+                data,
+                content_type
+            )
+
+        except Exception:
+            log.exception(
+                "WEB FILE ERROR"
+            )
+
+            self._json(
+                500,
+                {
+                    "ok": False,
+                    "error": "File read error"
+                }
+            )
 
     def do_OPTIONS(self):
         self.send_response(204)
         self._cors()
+        self.send_header(
+            "Content-Length",
+            "0"
+        )
         self.end_headers()
 
-    def _serve_file(self, file_path):
-        """Serve a frontend file from the same directory as bot.py."""
+    # ========================================================
+    # GET
+    # ========================================================
+
+    def do_GET(self):
+
         try:
-            base_dir = Path(__file__).resolve().parent
-            requested = (base_dir / file_path).resolve()
+            parsed = urlparse(self.path)
+            path = parsed.path
 
-            # Prevent path traversal outside the project directory.
-            requested.relative_to(base_dir)
+            # ==============================
+            # MAIN PAGE
+            # ==============================
 
-            if not requested.is_file():
-                return self._reply({
-                    "ok": False,
-                    "error": "Fayl topilmadi."
-                }, 404)
+            if path == "/":
 
-            data = requested.read_bytes()
-            import mimetypes
-            content_type = mimetypes.guess_type(str(requested))[0] or "application/octet-stream"
+                files = [
+                    "index.html",
+                    os.path.join(
+                        "templates",
+                        "index.html"
+                    )
+                ]
 
-            self.send_response(200)
-            self.send_header("Content-Type", f"{content_type}; charset=utf-8" if content_type.startswith(("text/", "application/javascript")) else content_type)
-            self.send_header("Content-Length", str(len(data)))
-            self._cors()
-            self.end_headers()
-            self.wfile.write(data)
-            return
+                for file_path in files:
+                    if os.path.isfile(file_path):
+                        self._serve_file(
+                            file_path,
+                            "text/html; charset=utf-8"
+                        )
+                        return
 
-        except ValueError:
-            return self._reply({
-                "ok": False,
-                "error": "Noto'g'ri fayl yo'li."
-            }, 403)
-        except Exception:
-            log.exception("Frontend faylini yuborishda xato")
-            return self._reply({
-                "ok": False,
-                "error": "Faylni yuklashda server xatosi."
-            }, 500)
-
-def do_GET(self):
-    from urllib.parse import urlparse
-    from pathlib import Path
-
-    path = urlparse(self.path).path
-
-    try:
-
-        # =========================
-        # ASOSIY SAYT
-        # =========================
-        if path == "/":
-
-            possible_files = [
-                Path("index.html"),
-                Path("templates/index.html"),
-            ]
-
-            html_path = None
-
-            for file_path in possible_files:
-                if file_path.exists():
-                    html_path = file_path
-                    break
-
-            if html_path is None:
-                return self._reply({
-                    "ok": False,
-                    "error": "index.html topilmadi."
-                }, 404)
-
-            raw = html_path.read_bytes()
-
-            self.send_response(200)
-            self.send_header(
-                "Content-Type",
-                "text/html; charset=utf-8"
-            )
-            self.send_header(
-                "Content-Length",
-                str(len(raw))
-            )
-            self._cors()
-            self.end_headers()
-            self.wfile.write(raw)
-            return
-
-        # =========================
-        # ROOT CSS / JS
-        # =========================
-        if path in (
-            "/style.css",
-            "/script.js"
-        ):
-
-            filename = path.lstrip("/")
-            file_path = Path(filename)
-
-            if not file_path.exists():
-
-                file_path = Path("static") / filename
-
-            if not file_path.exists():
-
-                return self._reply({
-                    "ok": False,
-                    "error": f"{filename} topilmadi."
-                }, 404)
-
-            raw = file_path.read_bytes()
-
-            if filename.endswith(".css"):
-                content_type = "text/css; charset=utf-8"
-            else:
-                content_type = "application/javascript; charset=utf-8"
-
-            self.send_response(200)
-            self.send_header(
-                "Content-Type",
-                content_type
-            )
-            self.send_header(
-                "Content-Length",
-                str(len(raw))
-            )
-            self._cors()
-            self.end_headers()
-            self.wfile.write(raw)
-            return
-
-        # =========================
-        # STATIC FOLDER
-        # =========================
-        if path.startswith("/static/"):
-
-            file_path = Path(path.lstrip("/"))
-
-            if not file_path.exists():
-
-                return self._reply({
-                    "ok": False,
-                    "error": "Static fayl topilmadi."
-                }, 404)
-
-            raw = file_path.read_bytes()
-
-            if path.endswith(".css"):
-                content_type = "text/css; charset=utf-8"
-            elif path.endswith(".js"):
-                content_type = "application/javascript; charset=utf-8"
-            elif path.endswith(".png"):
-                content_type = "image/png"
-            elif path.endswith(".jpg") or path.endswith(".jpeg"):
-                content_type = "image/jpeg"
-            elif path.endswith(".svg"):
-                content_type = "image/svg+xml"
-            else:
-                content_type = "application/octet-stream"
-
-            self.send_response(200)
-            self.send_header(
-                "Content-Type",
-                content_type
-            )
-            self.send_header(
-                "Content-Length",
-                str(len(raw))
-            )
-            self._cors()
-            self.end_headers()
-            self.wfile.write(raw)
-            return
-
-        # =========================
-        # HEALTH
-        # =========================
-        if path == "/health":
-
-            return self._reply({
-                "ok": True,
-                "service": "GAME DONAT",
-                "status": "online"
-            })
-
-        # =========================
-        # CATALOG API
-        # =========================
-        if path == "/api/catalog":
-
-            return self._reply({
-                "ok": True,
-                "games": web_catalog()
-            })
-
-        # =========================
-        # USER API
-        # =========================
-        if path == "/api/me":
-
-            uid = web_session_user(
-                self._auth_token()
-            )
-
-            if not uid:
-
-                return self._reply({
-                    "ok": False,
-                    "error": "Kirish talab qilinadi."
-                }, 401)
-
-            return self._reply({
-                "ok": True,
-                "user_id": uid,
-                "balance": float(
-                    get_balance(uid)
+                self._json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": "index.html not found"
+                    }
                 )
-            })
+                return
 
-        # =========================
-        # NOT FOUND
-        # =========================
-        return self._reply({
-            "ok": False,
-            "error": "Endpoint topilmadi."
-        }, 404)
+            # ==============================
+            # CSS
+            # ==============================
 
-    except Exception as e:
+            if path == "/style.css":
 
-        log.exception(
-            "Web GET API xatosi"
+                files = [
+                    "style.css",
+                    os.path.join(
+                        "static",
+                        "style.css"
+                    )
+                ]
+
+                for file_path in files:
+                    if os.path.isfile(file_path):
+                        self._serve_file(
+                            file_path,
+                            "text/css; charset=utf-8"
+                        )
+                        return
+
+                self._json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": "style.css not found"
+                    }
+                )
+                return
+
+            # ==============================
+            # JAVASCRIPT
+            # ==============================
+
+            if path == "/script.js":
+
+                files = [
+                    "script.js",
+                    os.path.join(
+                        "static",
+                        "script.js"
+                    )
+                ]
+
+                for file_path in files:
+                    if os.path.isfile(file_path):
+                        self._serve_file(
+                            file_path,
+                            "application/javascript; charset=utf-8"
+                        )
+                        return
+
+                self._json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": "script.js not found"
+                    }
+                )
+                return
+
+            # ==============================
+            # STATIC
+            # ==============================
+
+            if path.startswith("/static/"):
+
+                relative = path[
+                    len("/static/"):
+                ]
+
+                relative = os.path.normpath(
+                    relative
+                )
+
+                if (
+                    relative.startswith("..")
+                    or os.path.isabs(relative)
+                ):
+                    self._json(
+                        403,
+                        {
+                            "ok": False,
+                            "error": "Forbidden"
+                        }
+                    )
+                    return
+
+                file_path = os.path.join(
+                    "static",
+                    relative
+                )
+
+                if not os.path.isfile(file_path):
+                    self._json(
+                        404,
+                        {
+                            "ok": False,
+                            "error": "Static file not found"
+                        }
+                    )
+                    return
+
+                self._serve_file(file_path)
+                return
+
+            # ==============================
+            # HEALTH
+            # ==============================
+
+            if path == "/health":
+
+                self._json(
+                    200,
+                    {
+                        "ok": True,
+                        "status": "online",
+                        "service": "GAME DONAT"
+                    }
+                )
+                return
+
+            # ==============================
+            # CATALOG
+            # ==============================
+
+            if path == "/api/catalog":
+
+                try:
+                    result = web_catalog()
+
+                    if result is None:
+                        result = {
+                            "ok": True,
+                            "games": []
+                        }
+
+                    self._json(
+                        200,
+                        result
+                    )
+
+                except Exception:
+                    log.exception(
+                        "WEB CATALOG ERROR"
+                    )
+
+                    self._json(
+                        500,
+                        {
+                            "ok": False,
+                            "error": "Catalog error"
+                        }
+                    )
+
+                return
+
+            # ==============================
+            # CURRENT USER
+            # ==============================
+
+            if path == "/api/me":
+
+                token = self._auth_token()
+
+                if not token:
+                    self._json(
+                        401,
+                        {
+                            "ok": False,
+                            "error": "Authorization required"
+                        }
+                    )
+                    return
+
+                try:
+                    user_id = web_session_user(
+                        token
+                    )
+
+                    if not user_id:
+                        self._json(
+                            401,
+                            {
+                                "ok": False,
+                                "error": "Session expired"
+                            }
+                        )
+                        return
+
+                    self._json(
+                        200,
+                        {
+                            "ok": True,
+                            "user_id": user_id
+                        }
+                    )
+
+                except Exception:
+                    log.exception(
+                        "WEB ME ERROR"
+                    )
+
+                    self._json(
+                        500,
+                        {
+                            "ok": False,
+                            "error": "User error"
+                        }
+                    )
+
+                return
+
+            # ==============================
+            # NOT FOUND
+            # ==============================
+
+            self._json(
+                404,
+                {
+                    "ok": False,
+                    "error": "Not found",
+                    "path": path
+                }
+            )
+
+        except Exception:
+            log.exception(
+                "WEB GET ERROR"
+            )
+
+            try:
+                self._json(
+                    500,
+                    {
+                        "ok": False,
+                        "error": "Internal server error"
+                    }
+                )
+            except Exception:
+                pass
+
+    # ========================================================
+    # POST
+    # ========================================================
+
+    def do_POST(self):
+
+        try:
+            parsed = urlparse(self.path)
+            path = parsed.path
+
+            payload = self._body()
+
+            # ==============================
+            # REQUEST AUTH CODE
+            # ==============================
+
+            if path in (
+                "/api/auth/request",
+                "/api/request-auth",
+                "/api/auth-code"
+            ):
+
+                user_id = payload.get(
+                    "user_id"
+                )
+
+                if not user_id:
+                    self._json(
+                        400,
+                        {
+                            "ok": False,
+                            "error": "user_id required"
+                        }
+                    )
+                    return
+
+                result = web_request_auth_code(
+                    user_id
+                )
+
+                if result is None:
+                    result = {
+                        "ok": True
+                    }
+
+                self._json(
+                    200,
+                    result
+                )
+                return
+
+            # ==============================
+            # VERIFY AUTH CODE
+            # ==============================
+
+            if path in (
+                "/api/auth/verify",
+                "/api/verify-auth",
+                "/api/login"
+            ):
+
+                user_id = payload.get(
+                    "user_id"
+                )
+
+                code = payload.get(
+                    "code"
+                )
+
+                if not user_id or not code:
+                    self._json(
+                        400,
+                        {
+                            "ok": False,
+                            "error": "user_id and code required"
+                        }
+                    )
+                    return
+
+                result = web_verify_auth_code(
+                    user_id,
+                    str(code)
+                )
+
+                if result is None:
+                    result = {
+                        "ok": False,
+                        "error": "Invalid code"
+                    }
+
+                self._json(
+                    200,
+                    result
+                )
+                return
+
+            # ==============================
+            # CHECK GAME ID
+            # ==============================
+
+            if path in (
+                "/api/check-id",
+                "/api/check_id",
+                "/api/check"
+            ):
+
+                result = web_check_id(
+                    payload
+                )
+
+                if result is None:
+                    result = {
+                        "ok": False,
+                        "error": "Check failed"
+                    }
+
+                self._json(
+                    200,
+                    result
+                )
+                return
+
+            # ==============================
+            # CREATE ORDER
+            # ==============================
+
+            if path in (
+                "/api/order",
+                "/api/orders",
+                "/api/create-order",
+                "/api/create_order"
+            ):
+
+                token = self._auth_token()
+
+                if not token:
+                    self._json(
+                        401,
+                        {
+                            "ok": False,
+                            "error": "Authorization required"
+                        }
+                    )
+                    return
+
+                user_id = web_session_user(
+                    token
+                )
+
+                if not user_id:
+                    self._json(
+                        401,
+                        {
+                            "ok": False,
+                            "error": "Session expired"
+                        }
+                    )
+                    return
+
+                result = web_create_order(
+                    payload,
+                    user_id
+                )
+
+                if result is None:
+                    result = {
+                        "ok": False,
+                        "error": "Order failed"
+                    }
+
+                self._json(
+                    200,
+                    result
+                )
+                return
+
+            # ==============================
+            # POST NOT FOUND
+            # ==============================
+
+            self._json(
+                404,
+                {
+                    "ok": False,
+                    "error": "POST endpoint not found",
+                    "path": path
+                }
+            )
+
+        except Exception:
+            log.exception(
+                "WEB POST ERROR"
+            )
+
+            try:
+                self._json(
+                    500,
+                    {
+                        "ok": False,
+                        "error": "Internal server error"
+                    }
+                )
+            except Exception:
+                pass
+
+    def log_message(self, format, *args):
+        print(
+            "[WEB]",
+            format % args
         )
-
-        return self._reply({
-            "ok": False,
-            "error": str(e)
-        }, 500)
 
 
 # ============================================================
 # RENDER HEALTH SERVER
 # ============================================================
 
-class HealthHandler(WebAPIHandler):
-    pass
+    class HealthHandler(WebAPIHandler):
+        pass
 
 
 def start_health_server():
