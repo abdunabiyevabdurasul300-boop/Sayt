@@ -727,31 +727,28 @@ class WebAPIHandler(BaseHTTPRequestHandler):
             # ==============================
 
             if path == "/":
+    file_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "templates",
+        "index.html"
+    )
 
-                files = [
-                    "index.html",
-                    os.path.join(
-                        "templates",
-                        "index.html"
-                    )
-                ]
+    if os.path.isfile(file_path):
+        self._serve_file(
+            file_path,
+            "text/html; charset=utf-8"
+        )
+        return
 
-                for file_path in files:
-                    if os.path.isfile(file_path):
-                        self._serve_file(
-                            file_path,
-                            "text/html; charset=utf-8"
-                        )
-                        return
-
-                self._json(
-                    404,
-                    {
-                        "ok": False,
-                        "error": "index.html not found"
-                    }
-                )
-                return
+    self._json(
+        404,
+        {
+            "ok": False,
+            "error": "templates/index.html not found",
+            "file": file_path
+        }
+    )
+    return
 
             # ==============================
             # CSS
