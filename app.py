@@ -717,114 +717,105 @@ class WebAPIHandler(BaseHTTPRequestHandler):
     # ========================================================
 
     def do_GET(self):
-
         try:
             parsed = urlparse(self.path)
             path = parsed.path
 
-            # ==============================
-            # MAIN PAGE
-            # ==============================
+            # =========================
+            # ASOSIY SAYT
+            # =========================
+            if path == "/":
+                file_path = os.path.join(
+                    os.path.dirname(
+                        os.path.abspath(__file__)
+                    ),
+                    "templates",
+                    "index.html"
+                )
 
-    if path == "/":
-    file_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "templates",
-        "index.html"
-    )
+                if os.path.isfile(file_path):
+                    self._serve_file(
+                        file_path,
+                        "text/html; charset=utf-8"
+                    )
+                    return
 
-    if os.path.isfile(file_path):
-        self._serve_file(
-            file_path,
-            "text/html; charset=utf-8"
-        )
-        return
+                self._json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": "templates/index.html not found",
+                        "file": file_path
+                    }
+                )
+                return
 
-    self._json(
-        404,
-        {
-            "ok": False,
-            "error": "templates/index.html not found",
-            "file": file_path
-        }
-    )
-    return
-
-            # ==============================
+            # =========================
             # CSS
-            # ==============================
-
+            # =========================
             if path == "/style.css":
+                file_path = os.path.join(
+                    os.path.dirname(
+                        os.path.abspath(__file__)
+                    ),
+                    "static",
+                    "style.css"
+                )
 
-                files = [
-                    "style.css",
-                    os.path.join(
-                        "static",
-                        "style.css"
+                if os.path.isfile(file_path):
+                    self._serve_file(
+                        file_path,
+                        "text/css; charset=utf-8"
                     )
-                ]
-
-                for file_path in files:
-                    if os.path.isfile(file_path):
-                        self._serve_file(
-                            file_path,
-                            "text/css; charset=utf-8"
-                        )
-                        return
+                    return
 
                 self._json(
                     404,
                     {
                         "ok": False,
-                        "error": "style.css not found"
+                        "error": "static/style.css not found"
                     }
                 )
                 return
 
-            # ==============================
+            # =========================
             # JAVASCRIPT
-            # ==============================
-
+            # =========================
             if path == "/script.js":
+                file_path = os.path.join(
+                    os.path.dirname(
+                        os.path.abspath(__file__)
+                    ),
+                    "static",
+                    "script.js"
+                )
 
-                files = [
-                    "script.js",
-                    os.path.join(
-                        "static",
-                        "script.js"
+                if os.path.isfile(file_path):
+                    self._serve_file(
+                        file_path,
+                        "application/javascript; charset=utf-8"
                     )
-                ]
-
-                for file_path in files:
-                    if os.path.isfile(file_path):
-                        self._serve_file(
-                            file_path,
-                            "application/javascript; charset=utf-8"
-                        )
-                        return
+                    return
 
                 self._json(
                     404,
                     {
                         "ok": False,
-                        "error": "script.js not found"
+                        "error": "static/script.js not found"
                     }
                 )
                 return
 
-            # ==============================
-            # STATIC
-            # ==============================
-
+            # =========================
+            # STATIC FILES
+            # =========================
             if path.startswith("/static/"):
-
-                relative = path[
-                    len("/static/"):
-                ]
-
-                relative = os.path.normpath(
-                    relative
+                base_dir = os.path.dirname(
+                    os.path.abspath(__file__)
                 )
+
+                relative = path[len("/static/"):]
+                relative = os.path.normpath(relative)
 
                 if (
                     relative.startswith("..")
@@ -840,29 +831,28 @@ class WebAPIHandler(BaseHTTPRequestHandler):
                     return
 
                 file_path = os.path.join(
+                    base_dir,
                     "static",
                     relative
                 )
 
-                if not os.path.isfile(file_path):
-                    self._json(
-                        404,
-                        {
-                            "ok": False,
-                            "error": "Static file not found"
-                        }
-                    )
+                if os.path.isfile(file_path):
+                    self._serve_file(file_path)
                     return
 
-                self._serve_file(file_path)
+                self._json(
+                    404,
+                    {
+                        "ok": False,
+                        "error": "Static file not found"
+                    }
+                )
                 return
 
-            # ==============================
+            # =========================
             # HEALTH
-            # ==============================
-
+            # =========================
             if path == "/health":
-
                 self._json(
                     200,
                     {
@@ -873,12 +863,10 @@ class WebAPIHandler(BaseHTTPRequestHandler):
                 )
                 return
 
-            # ==============================
+            # =========================
             # CATALOG
-            # ==============================
-
+            # =========================
             if path == "/api/catalog":
-
                 try:
                     result = web_catalog()
 
@@ -908,12 +896,10 @@ class WebAPIHandler(BaseHTTPRequestHandler):
 
                 return
 
-            # ==============================
-            # CURRENT USER
-            # ==============================
-
+            # =========================
+            # ME
+            # =========================
             if path == "/api/me":
-
                 token = self._auth_token()
 
                 if not token:
@@ -964,10 +950,9 @@ class WebAPIHandler(BaseHTTPRequestHandler):
 
                 return
 
-            # ==============================
+            # =========================
             # NOT FOUND
-            # ==============================
-
+            # =========================
             self._json(
                 404,
                 {
