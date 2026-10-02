@@ -1210,8 +1210,7 @@ class WebAPIHandler(BaseHTTPRequestHandler):
 # ============================================================
 # RENDER HEALTH SERVER
 # ============================================================
-
-    class HealthHandler(WebAPIHandler):
+class HealthHandler(WebAPIHandler):
         pass
 
 
