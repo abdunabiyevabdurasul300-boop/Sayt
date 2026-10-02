@@ -725,8 +725,7 @@ class WebAPIHandler(BaseHTTPRequestHandler):
             # ==============================
             # MAIN PAGE
             # ==============================
-
-            if path == "/":
+if path == "/":
     file_path = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
         "templates",
