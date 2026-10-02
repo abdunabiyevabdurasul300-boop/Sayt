@@ -1,0 +1,105 @@
+<!DOCTYPE html><html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Donuz — Game Donat</title>
+    <link rel="stylesheet" href="/style.css">
+</head><body><header class="header">
+    <div class="logo">🎮 DONUZ</div>
+    <div id="balanceBox" class="balance">Balans: —</div>
+</header><main class="container"><section class="hero">
+    <h1>🎮 Game Donat</h1>
+    <p>PUBG Mobile, Mobile Legends va Grand Mobile</p>
+</section>
+
+<section id="authSection" class="card">
+    <h2>🔐 Kirish</h2>
+
+    <p>Telegram orqali tasdiqlash kodini oling.</p>
+
+    <input
+        id="userId"
+        type="number"
+        placeholder="Telegram ID"
+    >
+
+    <button onclick="requestAuth()">
+        📩 Kod olish
+    </button>
+
+    <div id="codeArea" style="display:none;">
+        <input
+            id="authCode"
+            type="text"
+            maxlength="6"
+            placeholder="6 xonali kod"
+        >
+
+        <button onclick="verifyAuth()">
+            ✅ Kirish
+        </button>
+    </div>
+
+    <div id="authResult"></div>
+</section>
+
+<section id="userSection" style="display:none;">
+
+    <section class="card">
+        <h2>🎮 O'yin tanlang</h2>
+
+        <select id="gameSelect" onchange="loadProducts()">
+            <option value="">O'yinni tanlang</option>
+        </select>
+    </section>
+
+    <section id="productsCard" class="card" style="display:none;">
+
+        <h2>📦 Paket</h2>
+
+        <div id="products"></div>
+
+    </section>
+
+    <section id="orderCard" class="card" style="display:none;">
+
+        <h2>🛒 Buyurtma</h2>
+
+        <input
+            id="playerId"
+            type="text"
+            placeholder="Player ID"
+        >
+
+        <input
+            id="serverId"
+            type="text"
+            placeholder="Server ID (kerak bo'lsa)"
+        >
+
+        <button onclick="checkPlayer()">
+            🔍 ID tekshirish
+        </button>
+
+        <div id="playerResult"></div>
+
+        <button
+            id="buyButton"
+            onclick="createOrder()"
+            style="display:none;"
+        >
+            💳 Sotib olish
+        </button>
+
+    </section>
+
+</section>
+
+<section class="card">
+    <h2>ℹ️ Ma'lumot</h2>
+    <p>Buyurtma berishdan oldin ID ma'lumotlarini tekshiring.</p>
+    <p>Grand Mobile uchun manual katalog narxlari saqlangan.</p>
+</section>
+
+</main><div id="toast"></div><script src="/script.js"></script></body>
+</html>
