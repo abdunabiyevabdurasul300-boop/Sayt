@@ -9,6 +9,7 @@ import contextvars
 import hashlib
 import base64
 from pathlib import Path
+from urllib.parse import urlparse, parse_qs
 
 try:
     from cryptography.fernet import Fernet, InvalidToken
