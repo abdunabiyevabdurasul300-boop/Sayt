@@ -620,97 +620,202 @@ class WebAPIHandler(BaseHTTPRequestHandler):
                 "error": "Faylni yuklashda server xatosi."
             }, 500)
 
-    def do_GET(self):
-        from urllib.parse import urlparse, unquote
+def do_GET(self):
+    from urllib.parse import urlparse
+    from pathlib import Path
 
-        path = urlparse(self.path).path
+    path = urlparse(self.path).path
 
-        try:
-            # Web sahifaning bosh sahifasi.
-            if path == "/":
-                return self._serve_file("index.html")
+    try:
 
-            # Render health check uchun JSON javob saqlanadi.
-            if path == "/health":
+        # =========================
+        # ASOSIY SAYT
+        # =========================
+        if path == "/":
+
+            possible_files = [
+                Path("index.html"),
+                Path("templates/index.html"),
+            ]
+
+            html_path = None
+
+            for file_path in possible_files:
+                if file_path.exists():
+                    html_path = file_path
+                    break
+
+            if html_path is None:
                 return self._reply({
-                    "ok": True,
-                    "service": "GAME DONAT",
-                    "status": "online",
-                })
+                    "ok": False,
+                    "error": "index.html topilmadi."
+                }, 404)
 
-            # Frontend CSS/JS/rasmlarini shu serverning o'zidan beramiz.
-            if not path.startswith("/api/"):
-                asset_path = unquote(path.lstrip("/"))
-                if asset_path:
-                    return self._serve_file(asset_path)
+            raw = html_path.read_bytes()
 
-            if path == "/api/catalog":
-                return self._reply({"ok": True, "games": web_catalog()})
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "text/html; charset=utf-8"
+            )
+            self.send_header(
+                "Content-Length",
+                str(len(raw))
+            )
+            self._cors()
+            self.end_headers()
+            self.wfile.write(raw)
+            return
 
-            if path == "/api/me":
-                uid = web_session_user(self._auth_token())
-                if not uid:
-                    return self._reply({"ok": False, "error": "Kirish talab qilinadi."}, 401)
+        # =========================
+        # ROOT CSS / JS
+        # =========================
+        if path in (
+            "/style.css",
+            "/script.js"
+        ):
+
+            filename = path.lstrip("/")
+            file_path = Path(filename)
+
+            if not file_path.exists():
+
+                file_path = Path("static") / filename
+
+            if not file_path.exists():
+
                 return self._reply({
-                    "ok": True,
-                    "user_id": uid,
-                    "balance": float(get_balance(uid)),
-                })
+                    "ok": False,
+                    "error": f"{filename} topilmadi."
+                }, 404)
 
-            return self._reply({"ok": False, "error": "Endpoint topilmadi."}, 404)
+            raw = file_path.read_bytes()
 
-        except Exception:
-            log.exception("Web GET API xatosi")
-            return self._reply({"ok": False, "error": "Server xatosi."}, 500)
+            if filename.endswith(".css"):
+                content_type = "text/css; charset=utf-8"
+            else:
+                content_type = "application/javascript; charset=utf-8"
 
-    def do_POST(self):
-        from urllib.parse import urlparse
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                content_type
+            )
+            self.send_header(
+                "Content-Length",
+                str(len(raw))
+            )
+            self._cors()
+            self.end_headers()
+            self.wfile.write(raw)
+            return
 
-        path = urlparse(self.path).path
-        payload = self._body()
+        # =========================
+        # STATIC FOLDER
+        # =========================
+        if path.startswith("/static/"):
 
-        try:
-            if path == "/api/auth/request":
-                try:
-                    uid = int(payload.get("telegram_id", 0))
-                except Exception:
-                    uid = 0
-                if not uid:
-                    return self._reply({"ok": False, "error": "Telegram ID noto'g'ri."}, 400)
-                ok, msg = web_request_auth_code(uid)
-                return self._reply({"ok": ok, "message": msg}, 200 if ok else 400)
+            file_path = Path(path.lstrip("/"))
 
-            if path == "/api/auth/verify":
-                try:
-                    uid = int(payload.get("telegram_id", 0))
-                except Exception:
-                    uid = 0
-                token = web_verify_auth_code(uid, payload.get("code", ""))
-                if not token:
-                    return self._reply({"ok": False, "error": "Kod noto'g'ri yoki muddati tugagan."}, 401)
+            if not file_path.exists():
+
                 return self._reply({
-                    "ok": True,
-                    "token": token,
-                    "user_id": uid,
-                    "balance": float(get_balance(uid)),
-                })
+                    "ok": False,
+                    "error": "Static fayl topilmadi."
+                }, 404)
 
-            if path == "/api/check-id":
-                result = web_check_id(payload)
-                return self._reply(result, 200 if result.get("ok") else 400)
+            raw = file_path.read_bytes()
 
-            if path == "/api/order":
-                uid = web_session_user(self._auth_token())
-                if not uid:
-                    return self._reply({"ok": False, "error": "Avval Telegram orqali kiring."}, 401)
-                result = web_create_order(payload, uid)
-                return self._reply(result, 200 if result.get("ok") else 400)
+            if path.endswith(".css"):
+                content_type = "text/css; charset=utf-8"
+            elif path.endswith(".js"):
+                content_type = "application/javascript; charset=utf-8"
+            elif path.endswith(".png"):
+                content_type = "image/png"
+            elif path.endswith(".jpg") or path.endswith(".jpeg"):
+                content_type = "image/jpeg"
+            elif path.endswith(".svg"):
+                content_type = "image/svg+xml"
+            else:
+                content_type = "application/octet-stream"
 
-            return self._reply({"ok": False, "error": "Endpoint topilmadi."}, 404)
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                content_type
+            )
+            self.send_header(
+                "Content-Length",
+                str(len(raw))
+            )
+            self._cors()
+            self.end_headers()
+            self.wfile.write(raw)
+            return
 
-        except Exception:
-            log.exception("Web POST API xatosi")
-            return self._reply({"ok": False, "error": "Server xatosi."}, 500)
+        # =========================
+        # HEALTH
+        # =========================
+        if path == "/health":
+
+            return self._reply({
+                "ok": True,
+                "service": "GAME DONAT",
+                "status": "online"
+            })
+
+        # =========================
+        # CATALOG API
+        # =========================
+        if path == "/api/catalog":
+
+            return self._reply({
+                "ok": True,
+                "games": web_catalog()
+            })
+
+        # =========================
+        # USER API
+        # =========================
+        if path == "/api/me":
+
+            uid = web_session_user(
+                self._auth_token()
+            )
+
+            if not uid:
+
+                return self._reply({
+                    "ok": False,
+                    "error": "Kirish talab qilinadi."
+                }, 401)
+
+            return self._reply({
+                "ok": True,
+                "user_id": uid,
+                "balance": float(
+                    get_balance(uid)
+                )
+            })
+
+        # =========================
+        # NOT FOUND
+        # =========================
+        return self._reply({
+            "ok": False,
+            "error": "Endpoint topilmadi."
+        }, 404)
+
+    except Exception as e:
+
+        log.exception(
+            "Web GET API xatosi"
+        )
+
+        return self._reply({
+            "ok": False,
+            "error": str(e)
+        }, 500)
 
 
 # ============================================================
