@@ -8,6 +8,7 @@ import threading
 import contextvars
 import hashlib
 import base64
+import mimetypes
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
