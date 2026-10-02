@@ -1,220 +1,640 @@
-const API = window.location.origin;
-
+let token = localStorage.getItem("donuz_token") || "";
+let userId = localStorage.getItem("donuz_user_id") || "";
 let catalog = [];
-let selected = null;
-let sessionToken = localStorage.getItem("game_donat_session") || "";
+let selectedProduct = null;
 
-const icons = {
-  "PUBG Mobile": "🔫",
-  "Free Fire": "🔥",
-  "Grand Mobile": "🚗",
-  "Telegram Premium": "⭐",
-  "Mobile Legends": "⚔️"
-};
 
-function money(v) {
-  return Number(v || 0).toLocaleString("uz-UZ") + " so'm";
-}
+async function api(url, options = {}) {
+    options.headers = options.headers || {};
 
-function showNotice(msg) {
-  const n = document.getElementById("notice");
-  if (!n) return;
-  n.textContent = msg;
-  n.classList.remove("hidden");
-  setTimeout(() => n.classList.add("hidden"), 4500);
-}
+    options.headers["Content-Type"] = "application/json";
 
-async function api(path, options = {}) {
-  const headers = {
-    "Content-Type": "application/json",
-    ...(options.headers || {})
-  };
-
-  if (sessionToken) {
-    headers.Authorization = "Bearer " + sessionToken;
-  }
-
-  try {
-    const r = await fetch(API + path, {
-      ...options,
-      headers
-    });
-
-    let d = {};
-    try {
-      d = await r.json();
-    } catch {}
-
-    if (!r.ok && !d.error) {
-      d.error = "Server xatosi";
+    if (token) {
+        options.headers["Authorization"] = "Bearer " + token;
     }
 
-    return d;
-  } catch (e) {
-    return {
-      ok: false,
-      error: "Server bilan bog‘lanib bo‘lmadi."
-    };
-  }
+    const response = await fetch(url, options);
+
+    let data;
+
+    try {
+        data = await response.json();
+    } catch {
+        throw new Error("Server noto'g'ri javob qaytardi");
+    }
+
+    if (!response.ok || data.ok === false) {
+        throw new Error(data.error || data.message || "Xatolik");
+    }
+
+    return data;
 }
+
+
+function showResult(id, text, type = "info") {
+    const el = document.getElementById(id);
+
+    if (!el) return;
+
+    el.className = type;
+    el.innerHTML = text;
+}
+
+
+function requestAuth() {
+
+    const id = document.getElementById("userId").value.trim();
+
+    if (!id) {
+        showResult(
+            "authResult",
+            "❌ Telegram ID kiriting",
+            "error"
+        );
+        return;
+    }
+
+    fetch("/api/auth/request", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            user_id: Number(id)
+        })
+    })
+    .then(async r => {
+        const data = await r.json();
+
+        if (!r.ok || data.ok === false) {
+            throw new Error(data.error || "Kod yuborilmadi");
+        }
+
+        userId = id;
+
+        localStorage.setItem(
+            "donuz_user_id",
+            userId
+        );
+
+        document.getElementById("codeArea").style.display = "block";
+
+        showResult(
+            "authResult",
+            "✅ Telegramingizga tasdiqlash kodi yuborildi.",
+            "success"
+        );
+    })
+    .catch(err => {
+        showResult(
+            "authResult",
+            "❌ " + err.message,
+            "error"
+        );
+    });
+}
+
+
+async function verifyAuth() {
+
+    const code = document
+        .getElementById("authCode")
+        .value
+        .trim();
+
+    if (!code) {
+        showResult(
+            "authResult",
+            "❌ Kodni kiriting",
+            "error"
+        );
+        return;
+    }
+
+    try {
+
+        const data = await api(
+            "/api/auth/verify",
+            {
+                method: "POST",
+                body: JSON.stringify({
+                    user_id: Number(userId),
+                    code: code
+                })
+            }
+        );
+
+        token = data.token || data.session_token;
+
+        if (!token) {
+            throw new Error(
+                "Server token qaytarmadi"
+            );
+        }
+
+        localStorage.setItem(
+            "donuz_token",
+            token
+        );
+
+        document.getElementById(
+            "authSection"
+        ).style.display = "none";
+
+        document.getElementById(
+            "userSection"
+        ).style.display = "block";
+
+        showResult(
+            "authResult",
+            "✅ Muvaffaqiyatli kirildi.",
+            "success"
+        );
+
+        await loadMe();
+        await loadCatalog();
+
+    } catch (err) {
+
+        showResult(
+            "authResult",
+            "❌ " + err.message,
+            "error"
+        );
+    }
+}
+
+
+async function loadMe() {
+
+    try {
+
+        const data = await api("/api/me");
+
+        const me = data.me || data.user || data;
+
+        if (
+            me &&
+            me.balance !== undefined
+        ) {
+            document.getElementById(
+                "balanceBox"
+            ).textContent =
+                "Balans: " +
+                Number(me.balance).toLocaleString("uz-UZ") +
+                " so'm";
+        }
+
+    } catch (err) {
+
+        console.log(
+            "ME:",
+            err.message
+        );
+    }
+}
+
 
 async function loadCatalog() {
-  const games = document.getElementById("games");
 
-  if (games) {
-    games.innerHTML =
-      '<div class="loading">⏳ Katalog yuklanmoqda...</div>';
-  }
+    try {
 
-  const d = await api("/api/catalog");
+        const data = await api(
+            "/api/catalog"
+        );
 
-  if (!d.ok) {
-    if (games) {
-      games.innerHTML =
-        '<div class="loading">❌ Katalogni yuklab bo‘lmadi.</div>';
+        catalog =
+            data.games ||
+            data.catalog ||
+            data.data ||
+            [];
+
+        const select =
+            document.getElementById(
+                "gameSelect"
+            );
+
+        select.innerHTML =
+            '<option value="">O\'yinni tanlang</option>';
+
+        catalog.forEach(game => {
+
+            const option =
+                document.createElement(
+                    "option"
+                );
+
+            option.value =
+                game.id ||
+                game.game_id;
+
+            option.textContent =
+                game.name ||
+                game.title ||
+                ("Game " + option.value);
+
+            select.appendChild(option);
+        });
+
+    } catch (err) {
+
+        showResult(
+            "products",
+            "❌ Katalog yuklanmadi: " +
+            err.message,
+            "error"
+        );
     }
-    return;
-  }
-
-  catalog = d.games || [];
-
-  renderGames();
-  refreshMe();
 }
 
-function renderGames() {
-  const box = document.getElementById("games");
 
-  if (!box) return;
+function getProducts(game) {
 
-  if (!catalog.length) {
-    box.innerHTML =
-      '<div class="loading">O‘yinlar topilmadi.</div>';
-    return;
-  }
+    return (
+        game.products ||
+        game.packages ||
+        game.items ||
+        []
+    );
+}
 
-  box.innerHTML = catalog.map((g, i) => `
-    <div class="game-card">
 
-      <div class="game-icon">
-        ${icons[g.name] || "🎮"}
-      </div>
+function loadProducts() {
 
-      <h3>${esc(g.name)}</h3>
+    const gameId =
+        document.getElementById(
+            "gameSelect"
+        ).value;
 
-      <p>
-        ${g.manual ? "Manual buyurtma" : "API orqali donat"}
-      </p>
+    const card =
+        document.getElementById(
+            "productsCard"
+        );
 
-      <div class="packages">
+    const products =
+        document.getElementById(
+            "products"
+        );
 
-        ${(g.packages || []).map(p => `
-          <div class="package">
+    document.getElementById(
+        "orderCard"
+    ).style.display = "none";
 
-            <h3>${esc(p.name)}</h3>
+    products.innerHTML = "";
 
-            <div class="price">
-              ${money(p.price)}
+    if (!gameId) {
+
+        card.style.display = "none";
+
+        return;
+    }
+
+    const game =
+        catalog.find(g =>
+            String(
+                g.id ||
+                g.game_id
+            ) === String(gameId)
+        );
+
+    if (!game) return;
+
+    const list =
+        getProducts(game);
+
+    if (!list.length) {
+
+        products.innerHTML =
+            '<div class="error">Bu o\'yinda paket topilmadi.</div>';
+
+        card.style.display = "block";
+
+        return;
+    }
+
+    list.forEach(product => {
+
+        const id =
+            product.id ||
+            product.product_id;
+
+        const name =
+            product.name ||
+            product.title ||
+            product.package_name ||
+            "Paket";
+
+        const price =
+            product.price ??
+            product.sale_price ??
+            product.amount ??
+            0;
+
+        const div =
+            document.createElement(
+                "div"
+            );
+
+        div.className = "product";
+
+        div.innerHTML = `
+            <div class="product-title">
+                ${escapeHtml(name)}
             </div>
 
-            <button
-              type="button"
-              onclick="openOrder(${i}, ${p.paket_id})">
-              🛒 Xarid qilish
+            <div class="product-price">
+                💰 ${Number(price).toLocaleString("uz-UZ")} so'm
+            </div>
+
+            <button onclick="selectProduct('${String(id).replace(/'/g, "\\'")}')">
+                🛒 Tanlash
             </button>
+        `;
 
-          </div>
-        `).join("")}
+        products.appendChild(div);
+    });
 
-      </div>
-
-    </div>
-  `).join("");
+    card.style.display = "block";
 }
 
-function openOrder(gameIndex, paketId) {
-  const g = catalog[gameIndex];
 
-  if (!g) return;
+function selectProduct(productId) {
 
-  const p = (g.packages || []).find(
-    x => x.paket_id === paketId
-  );
+    const gameId =
+        document.getElementById(
+            "gameSelect"
+        ).value;
 
-  if (!p) return;
+    const game =
+        catalog.find(g =>
+            String(
+                g.id ||
+                g.game_id
+            ) === String(gameId)
+        );
 
-  selected = {
-    game: g,
-    package: p
-  };
+    if (!game) return;
 
-  const title = document.getElementById("orderTitle");
-  const pack = document.getElementById("orderPackage");
-  const player = document.getElementById("playerId");
-  const server = document.getElementById("serverId");
-  const result = document.getElementById("checkResult");
-  const orderBtn = document.getElementById("orderBtn");
-  const modal = document.getElementById("orderModal");
+    const products =
+        getProducts(game);
 
-  if (title) {
-    title.textContent = "🛒 " + g.name;
-  }
+    selectedProduct =
+        products.find(p =>
+            String(
+                p.id ||
+                p.product_id
+            ) === String(productId)
+        );
 
-  if (pack) {
-    pack.textContent =
-      `${p.name} — ${money(p.price)}`;
-  }
+    if (!selectedProduct) {
+        alert("Paket topilmadi");
+        return;
+    }
 
-  if (player) {
-    player.placeholder =
-      g.id_label || "Player ID";
-    player.value = "";
-  }
+    document.getElementById(
+        "orderCard"
+    ).style.display = "block";
 
-  if (server) {
-    server.value = "";
-    server.classList.toggle(
-      "hidden",
-      !g.requires_server
-    );
-  }
+    document.getElementById(
+        "playerId"
+    ).value = "";
 
-  if (result) {
-    result.textContent = "";
-  }
+    document.getElementById(
+        "serverId"
+    ).value = "";
 
-  if (orderBtn) {
-    orderBtn.classList.add("hidden");
-  }
+    document.getElementById(
+        "playerResult"
+    ).innerHTML = "";
 
-  if (modal) {
-    modal.classList.remove("hidden");
-  }
+    document.getElementById(
+        "buyButton"
+    ).style.display = "none";
+
+    document.getElementById(
+        "orderCard"
+    ).scrollIntoView({
+        behavior: "smooth"
+    });
 }
 
-function closeOrder() {
-  const modal = document.getElementById("orderModal");
-  if (modal) {
-    modal.classList.add("hidden");
-  }
+
+async function checkPlayer() {
+
+    if (!selectedProduct) {
+
+        showResult(
+            "playerResult",
+            "❌ Avval paket tanlang.",
+            "error"
+        );
+
+        return;
+    }
+
+    const gameId =
+        document.getElementById(
+            "gameSelect"
+        ).value;
+
+    const playerId =
+        document.getElementById(
+            "playerId"
+        ).value.trim();
+
+    const serverId =
+        document.getElementById(
+            "serverId"
+        ).value.trim();
+
+    if (!playerId) {
+
+        showResult(
+            "playerResult",
+            "❌ Player ID kiriting.",
+            "error"
+        );
+
+        return;
+    }
+
+    try {
+
+        showResult(
+            "playerResult",
+            "⏳ ID tekshirilmoqda...",
+            "info"
+        );
+
+        const data =
+            await api(
+                "/api/check-id",
+                {
+                    method: "POST",
+                    body: JSON.stringify({
+                        game_id: Number(gameId),
+                        player_id: playerId,
+                        server_id: serverId
+                    })
+                }
+            );
+
+        const name =
+            data.player_name ||
+            data.nickname ||
+            data.name ||
+            data.username ||
+            data.data?.player_name ||
+            data.data?.nickname ||
+            "Tasdiqlandi";
+
+        showResult(
+            "playerResult",
+            "✅ Nickname: <b>" +
+            escapeHtml(String(name)) +
+            "</b>",
+            "success"
+        );
+
+        document.getElementById(
+            "buyButton"
+        ).style.display = "block";
+
+    } catch (err) {
+
+        document.getElementById(
+            "buyButton"
+        ).style.display = "none";
+
+        showResult(
+            "playerResult",
+            "❌ " + err.message,
+            "error"
+        );
+    }
 }
 
-function openLogin() {
-  const modal = document.getElementById("loginModal");
-  if (modal) {
-    modal.classList.remove("hidden");
-  }
+
+async function createOrder() {
+
+    if (!selectedProduct) return;
+
+    const gameId =
+        document.getElementById(
+            "gameSelect"
+        ).value;
+
+    const playerId =
+        document.getElementById(
+            "playerId"
+        ).value.trim();
+
+    const serverId =
+        document.getElementById(
+            "serverId"
+        ).value.trim();
+
+    const productId =
+        selectedProduct.id ||
+        selectedProduct.product_id;
+
+    if (!playerId) {
+        alert("Player ID kiriting");
+        return;
+    }
+
+    if (
+        !confirm(
+            "Buyurtmani tasdiqlaysizmi?"
+        )
+    ) {
+        return;
+    }
+
+    try {
+
+        const data =
+            await api(
+                "/api/order",
+                {
+                    method: "POST",
+                    body: JSON.stringify({
+                        game_id: Number(gameId),
+                        product_id: Number(productId),
+                        player_id: playerId,
+                        server_id: serverId
+                    })
+                }
+            );
+
+        showResult(
+            "playerResult",
+            "✅ Buyurtma qabul qilindi!",
+            "success"
+        );
+
+        await loadMe();
+
+        document.getElementById(
+            "buyButton"
+        ).style.display = "none";
+
+    } catch (err) {
+
+        showResult(
+            "playerResult",
+            "❌ " + err.message,
+            "error"
+        );
+    }
 }
 
-function closeLogin() {
-  const modal = document.getElementById("loginModal");
-  if (modal) {
-    modal.classList.add("hidden");
-  }
+
+function escapeHtml(value) {
+
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
 }
 
-async function checkId() {
-  if (!selected) return;
 
-  const playerEl = document.getElementById("playerId");
-  const serverEl = document.getElementBy
+async function autoLogin() {
+
+    if (!token || !userId) {
+        return;
+    }
+
+    try {
+
+        await loadMe();
+
+        document.getElementById(
+            "authSection"
+        ).style.display = "none";
+
+        document.getElementById(
+            "userSection"
+        ).style.display = "block";
+
+        await loadCatalog();
+
+    } catch {
+
+        localStorage.removeItem(
+            "donuz_token"
+        );
+
+        localStorage.removeItem(
+            "donuz_user_id"
+        );
+
+        token = "";
+        userId = "";
+    }
+}
+
+
+autoLogin();
