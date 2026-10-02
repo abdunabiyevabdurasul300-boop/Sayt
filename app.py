@@ -581,18 +581,68 @@ class WebAPIHandler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    def _serve_file(self, file_path):
+        """Serve a frontend file from the same directory as bot.py."""
+        try:
+            base_dir = Path(__file__).resolve().parent
+            requested = (base_dir / file_path).resolve()
+
+            # Prevent path traversal outside the project directory.
+            requested.relative_to(base_dir)
+
+            if not requested.is_file():
+                return self._reply({
+                    "ok": False,
+                    "error": "Fayl topilmadi."
+                }, 404)
+
+            data = requested.read_bytes()
+            import mimetypes
+            content_type = mimetypes.guess_type(str(requested))[0] or "application/octet-stream"
+
+            self.send_response(200)
+            self.send_header("Content-Type", f"{content_type}; charset=utf-8" if content_type.startswith(("text/", "application/javascript")) else content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self._cors()
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        except ValueError:
+            return self._reply({
+                "ok": False,
+                "error": "Noto'g'ri fayl yo'li."
+            }, 403)
+        except Exception:
+            log.exception("Frontend faylini yuborishda xato")
+            return self._reply({
+                "ok": False,
+                "error": "Faylni yuklashda server xatosi."
+            }, 500)
+
     def do_GET(self):
-        from urllib.parse import urlparse
+        from urllib.parse import urlparse, unquote
 
         path = urlparse(self.path).path
 
         try:
-            if path == "/" or path == "/health":
+            # Web sahifaning bosh sahifasi.
+            if path == "/":
+                return self._serve_file("index.html")
+
+            # Render health check uchun JSON javob saqlanadi.
+            if path == "/health":
                 return self._reply({
                     "ok": True,
                     "service": "GAME DONAT",
                     "status": "online",
                 })
+
+            # Frontend CSS/JS/rasmlarini shu serverning o'zidan beramiz.
+            if not path.startswith("/api/"):
+                asset_path = unquote(path.lstrip("/"))
+                if asset_path:
+                    return self._serve_file(asset_path)
 
             if path == "/api/catalog":
                 return self._reply({"ok": True, "games": web_catalog()})
