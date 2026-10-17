@@ -732,6 +732,40 @@ class WebAPIHandler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    def do_HEAD(self):
+        from urllib.parse import urlparse, unquote
+        path = unquote(urlparse(self.path).path)
+        if path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if path in ("/", "/index.html", "/style.css", "/script.js", "/app.js", "/main.js") or path.startswith(("/static/", "/images/", "/assets/")):
+            root = Path(__file__).resolve().parent
+            if path in ("/", "/index.html"):
+                candidates = ["static/index.html", "templates/index.html", "templates/home.html", "templates/main.html", "index.html"]
+            else:
+                candidates = [path.lstrip("/")]
+                if path in ("/style.css", "/script.js", "/app.js", "/main.js"):
+                    candidates.append("static/" + path.lstrip("/"))
+            for candidate in candidates:
+                target = (root / candidate).resolve()
+                if root in target.parents and target.is_file():
+                    data = target.read_bytes()
+                    self.send_response(200)
+                    self.send_header("Content-Type", mimetypes.guess_type(str(target))[0] or "application/octet-stream")
+                    self.send_header("Content-Length", str(len(data)))
+                    self._cors()
+                    self.end_headers()
+                    return
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _serve_site_file(self, filepath):
         """Serve existing website files without changing the old static/templates folders."""
         import mimetypes
@@ -762,16 +796,20 @@ class WebAPIHandler(BaseHTTPRequestHandler):
         path = unquote(urlparse(self.path).path)
         root = Path(__file__).resolve().parent
 
-        # Keep the old website: if templates/index.html exists, show it at '/'.
+        # Serve the current Web App landing page first, matching web_server.py.
         if path == "/":
-            for candidate in ("templates/index.html", "templates/home.html", "templates/main.html"):
+            for candidate in ("static/index.html", "templates/index.html", "templates/home.html", "templates/main.html", "index.html"):
                 if (root / candidate).is_file():
                     self._serve_site_file(candidate)
                     return
-            # Some projects store the landing page directly in the root.
-            if (root / "index.html").is_file():
-                self._serve_site_file("index.html")
-                return
+            return self._reply({"ok": False, "error": "Saytning index.html fayli topilmadi."}, 404)
+
+        if path == "/index.html":
+            for candidate in ("static/index.html", "templates/index.html", "index.html"):
+                if (root / candidate).is_file():
+                    self._serve_site_file(candidate)
+                    return
+            return self._reply({"ok": False, "error": "index.html topilmadi."}, 404)
 
         # Serve assets from the existing static folder, including legacy root URLs
         # such as /style.css and /script.js used by older versions of the website.
